@@ -1,0 +1,174 @@
+:root {
+  --texto: #1f2430;
+  --suave: #6b7280;
+  --borde: #e2e5ea;
+  --panel: #ffffff;
+  --primario: #1677c9;
+  --primario-oscuro: #0f5d9e;
+  --menta: #a8e3c4;
+  --verde: #1f9d55;
+  --verde-fondo: #ffffff;
+  --amarillo: #e3b505;
+  --amarillo-fondo: #fbefc4;
+  --rojo: #dc4040;
+  --rojo-fondo: #f9d6d6;
+  --azul-sel: #1677c9;
+  --error: #c62828;
+}
+* { box-sizing: border-box; }
+html { min-height: 100%; }
+body {
+  margin: 0; min-height: 100vh; color: var(--texto);
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  background: linear-gradient(160deg, #1593e0 0%, #3aa9d8 55%, #6fcfc8 100%) fixed;
+}
+h1 { font-size: 1.6rem; margin: 0 0 6px; }
+h2 { font-size: 1.25rem; margin: 0 0 12px; }
+h3 { margin: 0 0 14px; }
+code { background: #eef2f7; padding: 2px 6px; border-radius: 4px; }
+
+/* ---------- Barra superior ---------- */
+.barra { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 12px 28px; color: #fff; }
+.marca { font-weight: 700; font-size: 1.2rem; }
+.marca span { font-weight: 400; opacity: .8; font-size: .85rem; margin-left: 6px; }
+nav { display: flex; gap: 4px; flex: 1; flex-wrap: wrap; }
+.tab { background: transparent; color: #fff; border: 0; padding: 8px 14px; border-radius: 999px; cursor: pointer; font-size: .95rem; }
+.tab:hover, .tab.activa { background: rgba(255, 255, 255, .22); }
+.sesion { display: flex; align-items: center; gap: 10px; font-size: .92rem; }
+
+main { max-width: 1200px; margin: 8px auto 40px; padding: 0 16px; }
+.oculta { display: none !important; }
+.panel { background: var(--panel); border-radius: 18px; padding: 28px; box-shadow: 0 18px 40px rgba(10, 40, 80, .18); }
+.nota { color: var(--suave); font-size: .9rem; margin: 6px 0; }
+#vista-reservas > .cabecera-seccion h2, #vista-estado > h2, #vista-estado > .nota, #resumen-vuelos { color: #fff; }
+
+/* ---------- Formularios ---------- */
+.campo { display: flex; flex-direction: column; gap: 4px; }
+.campo label { font-size: .85rem; color: var(--suave); font-weight: 600; }
+input, select {
+  padding: 9px 11px; border: 1px solid var(--borde); border-radius: 8px; font-size: .95rem;
+  color: var(--texto); background: #fff; font-family: inherit; width: 100%;
+}
+input:focus, select:focus { outline: 2px solid #9cc9ef; border-color: var(--primario); }
+input.invalido, select.invalido { border-color: var(--error); background: #fff7f7; }
+.error-campo { color: var(--error); font-size: .8rem; min-height: 1em; }
+.ayuda { color: var(--suave); font-size: .78rem; }
+button { padding: 10px 18px; border: 0; border-radius: 999px; cursor: pointer; font-size: .92rem; font-family: inherit; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+.primario { background: var(--primario); color: #fff; }
+.primario:hover:not(:disabled) { background: var(--primario-oscuro); }
+.secundario { background: #fff; color: var(--texto); border: 1px solid var(--borde); }
+.secundario:hover { background: #f4f6f9; }
+.peligro { background: var(--rojo); color: #fff; }
+.mini { padding: 6px 12px; font-size: .82rem; }
+.enlace { background: none; color: var(--suave); padding: 6px 0; }
+.enlace:hover { color: var(--texto); }
+.barra .secundario { background: #fff; border: 0; color: var(--primario); }
+
+/* ---------- Acceso ---------- */
+.acceso { max-width: 420px; margin: 40px auto; display: flex; flex-direction: column; gap: 12px; }
+.separador { display: flex; align-items: center; gap: 10px; color: var(--suave); font-size: .85rem; margin-top: 6px; }
+.separador::before, .separador::after { content: ""; flex: 1; border-top: 1px solid var(--borde); }
+
+/* ---------- Búsqueda y tablas ---------- */
+.filtros { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; align-items: start; padding: 20px; }
+.filtros > button { margin-top: 22px; }
+.cabecera-seccion { display: flex; justify-content: space-between; align-items: center; margin: 16px 0 12px; }
+.cabecera-seccion select { width: auto; }
+.tabla-envoltura { overflow-x: auto; background: var(--panel); border-radius: 14px; box-shadow: 0 12px 30px rgba(10, 40, 80, .15); }
+table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+th, td { padding: 11px 14px; text-align: left; border-bottom: 1px solid var(--borde); white-space: nowrap; }
+th { color: var(--suave); font-weight: 600; background: #f8fafc; }
+tr:last-child td { border-bottom: 0; }
+td.vacio { text-align: center; color: var(--suave); padding: 30px; }
+.etiqueta { padding: 3px 10px; border-radius: 999px; font-size: .78rem; font-weight: 600; }
+.etiqueta.CONFIRMADA, .etiqueta.activo { background: #dff5e8; color: var(--verde); }
+.etiqueta.CANCELADA, .etiqueta.caído, .etiqueta.error { background: var(--rojo-fondo); color: var(--rojo); }
+.acciones { display: flex; gap: 6px; }
+
+/* ---------- Mapa de asientos ---------- */
+.mapa-panel { display: grid; grid-template-columns: minmax(280px, 380px) 1fr; gap: 0; padding: 0; overflow: hidden; }
+.info-vuelo { padding: 28px; border-right: 1px dashed var(--borde); display: flex; flex-direction: column; gap: 18px; }
+.subtitulo { margin: 0; font-size: 1.05rem; }
+.itinerario { display: grid; grid-template-columns: 56px 4px 1fr; gap: 12px; align-items: stretch; }
+.duracion { color: var(--suave); font-size: .85rem; align-self: center; }
+.linea { background: #2b5d9b; border-radius: 4px; position: relative; }
+.linea::before, .linea::after { content: ""; position: absolute; left: -3px; width: 10px; height: 10px; border-radius: 50%; background: #2b5d9b; }
+.linea::before { top: 0; } .linea::after { bottom: 0; }
+.paradas { display: flex; flex-direction: column; gap: 16px; font-size: 1.05rem; }
+.aerolinea { font-size: .9rem; }
+.seleccion { border-top: 1px solid var(--borde); padding-top: 16px; display: flex; flex-direction: column; gap: 10px; }
+.seleccion-cabecera { display: flex; justify-content: space-between; align-items: center; }
+.seleccion-cabecera h2 { margin: 0; }
+.reloj { background: #fff4d6; color: #8a6200; padding: 4px 10px; border-radius: 999px; font-size: .82rem; font-weight: 600; }
+.reloj.urgente { background: var(--rojo-fondo); color: var(--rojo); }
+.pasajero { border: 1px solid var(--borde); border-radius: 12px; padding: 12px; margin-bottom: 10px; display: grid; gap: 8px; }
+.pasajero-cabecera { display: flex; justify-content: space-between; align-items: center; font-weight: 600; }
+.pasajero-cabecera .precio { color: var(--suave); font-weight: 400; font-size: .88rem; }
+.doc { display: grid; grid-template-columns: 120px 1fr; gap: 8px; }
+.botones-seleccion { display: flex; gap: 8px; }
+.botones-seleccion button { flex: 1; }
+.ver-clave { display: flex; flex-direction: row !important; align-items: center; gap: 6px !important; font-weight: 400 !important; cursor: pointer; }
+.ver-clave input { width: auto; }
+.contador { float: right; }
+.total { display: flex; justify-content: space-between; font-size: 1.1rem; font-weight: 700; padding: 6px 2px; }
+
+.mapa { padding: 28px; min-width: 0; }
+.pildoras { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
+.pildora { border: 1px solid var(--borde); background: #fff; padding: 10px 20px; border-radius: 999px; font-size: 1rem; color: var(--texto); }
+.pildora.activa { background: var(--menta); border-color: var(--menta); }
+.pildora small { color: var(--suave); margin-left: 4px; }
+.leyenda { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 12px; font-size: .95rem; }
+.leyenda span { display: flex; align-items: center; gap: 8px; }
+.leyenda .asiento { width: 22px; height: 22px; cursor: default; }
+.resumen { font-size: .95rem; line-height: 1.5; margin-bottom: 14px; }
+.pie { margin-top: 16px; }
+
+.grilla-asientos { --ancho-fila: 40px; --ancho-asiento: 34px; --ancho-pasillo: 22px; display: grid; gap: 8px 8px; justify-content: start; align-items: center; overflow-x: auto; padding-bottom: 6px; }
+.grilla-asientos .letra { text-align: center; font-weight: 700; }
+.grilla-asientos .num-fila { color: var(--texto); padding-right: 10px; text-align: right; }
+.asiento {
+  display: inline-block; width: 34px; height: 30px; border-radius: 5px; border: 2px solid; border-bottom-width: 5px;
+  cursor: pointer; padding: 0; font-size: .7rem; font-weight: 600; transition: transform .08s;
+}
+.asiento:hover:not(:disabled) { transform: scale(1.08); }
+.asiento.DISPONIBLE { background: var(--verde-fondo); border-color: var(--verde); color: transparent; }
+.asiento.DISPONIBLE:hover { color: var(--verde); }
+.asiento.BLOQUEADO { background: var(--amarillo-fondo); border-color: var(--amarillo); color: transparent; cursor: not-allowed; }
+.asiento.OCUPADO { background: var(--rojo-fondo); border-color: var(--rojo); color: transparent; cursor: not-allowed; }
+.asiento.SELECCIONADO, .asiento.MIO { background: var(--azul-sel); border-color: #0d4f86; color: #fff; }
+.asiento.RESERVADO { background: #cfe3f6; border-color: #7aa7cf; color: #2b5d9b; cursor: not-allowed; }
+.asiento.QUITADO { background: #fff; border-color: var(--azul-sel); border-style: dashed; color: var(--azul-sel); }
+
+/* ---------- Estado ---------- */
+.grilla-estado { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
+.grilla-estado .panel { padding: 18px; display: flex; flex-direction: column; gap: 6px; }
+
+/* ---------- Modales y avisos ---------- */
+dialog { border: 0; border-radius: 16px; padding: 26px; width: min(440px, 92vw); box-shadow: 0 20px 50px rgba(0, 0, 0, .25); }
+dialog::backdrop { background: rgba(10, 30, 60, .45); }
+dialog form { display: flex; flex-direction: column; gap: 12px; }
+menu { display: flex; justify-content: flex-end; gap: 8px; padding: 0; margin: 8px 0 0; }
+.lista-detalle { margin: 0; padding-left: 18px; line-height: 1.6; }
+
+#avisos { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 10; }
+.aviso { padding: 12px 16px; border-radius: 10px; color: #fff; max-width: 380px; box-shadow: 0 6px 18px rgba(0,0,0,.2); font-size: .9rem; }
+.aviso.ok { background: var(--verde); }
+.aviso.error { background: var(--error); }
+.aviso.info { background: #2b5d9b; }
+
+@media (max-width: 860px) {
+  .mapa-panel { grid-template-columns: 1fr; }
+  .info-vuelo { border-right: 0; border-bottom: 1px dashed var(--borde); }
+  .barra { padding: 12px 16px; justify-content: space-between; }
+  .barra nav { order: 3; flex-basis: 100%; overflow-x: auto; flex-wrap: nowrap; }
+  .tab { white-space: nowrap; padding: 7px 12px; }
+  .panel { padding: 18px; }
+  .mapa { padding: 18px; }
+  main { padding: 0 10px; }
+  .grilla-asientos { --ancho-fila: 24px; --ancho-asiento: 24px; --ancho-pasillo: 8px; gap: 6px 3px; }
+  .grilla-asientos .num-fila { padding-right: 2px; font-size: .8rem; }
+  .asiento { width: 24px; height: 23px; border-width: 2px; border-bottom-width: 4px; font-size: .62rem; }
+  .mapa { padding: 16px 14px; }
+  .pildora { padding: 7px 14px; font-size: .9rem; }
+}

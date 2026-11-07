@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AeroReservas SOA</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="barra">
+    <div class="marca">✈ AeroReservas <span>SOA · Flask</span></div>
+    <nav>
+      <button class="tab activa" data-vista="vuelos">Buscar vuelos</button>
+      <button class="tab" data-vista="reservas">Mis reservas</button>
+      <button class="tab" data-vista="estado">Estado servicios</button>
+    </nav>
+    <div id="sesion" class="sesion"></div>
+  </header>
+
+  <main>
+    <!-- ================= Acceso ================= -->
+    <section id="vista-acceso" class="vista oculta">
+      <form id="form-login" class="panel acceso" novalidate>
+        <h1>Iniciar sesión</h1>
+        <p class="nota">Ingrese para seleccionar asientos y gestionar sus reservas.</p>
+        <div class="campo">
+          <label for="login-email">Email</label>
+          <input id="login-email" name="email" type="text" inputmode="email" maxlength="50" autocomplete="username"
+                 autocapitalize="off" spellcheck="false" placeholder="nombre@uta.edu.ec" required>
+          <small class="error-campo"></small>
+        </div>
+        <div class="campo">
+          <label for="login-password">Contraseña</label>
+          <input id="login-password" name="password" type="password" maxlength="64" autocomplete="current-password" required>
+          <label class="ver-clave"><input type="checkbox" data-ver="login-password"> Mostrar contraseña</label>
+          <small class="error-campo"></small>
+        </div>
+        <button type="submit" class="primario">Ingresar</button>
+        <div class="separador"><span>¿No tiene una cuenta?</span></div>
+        <button type="button" id="abrir-registro" class="secundario">Crear cuenta</button>
+      </form>
+    </section>
+
+    <!-- ================= Vuelos ================= -->
+    <section id="vista-vuelos" class="vista">
+      <form id="form-busqueda" class="panel filtros" novalidate>
+        <div class="campo">
+          <label for="f-origen">Origen</label>
+          <select id="f-origen" name="origen"><option value="">Todos</option></select>
+        </div>
+        <div class="campo">
+          <label for="f-destino">Destino</label>
+          <select id="f-destino" name="destino"><option value="">Todos</option></select>
+          <small class="error-campo"></small>
+        </div>
+        <div class="campo">
+          <label for="f-fecha">Fecha</label>
+          <input id="f-fecha" name="fecha" type="date">
+          <small class="error-campo"></small>
+        </div>
+        <div class="campo">
+          <label for="f-pasajeros">Pasajeros</label>
+          <select id="f-pasajeros" name="pasajeros">
+            <option>1</option><option>2</option><option>3</option><option>4</option><option>5</option>
+          </select>
+          <small class="error-campo"></small>
+        </div>
+        <button type="submit" class="primario">Buscar</button>
+      </form>
+      <p id="resumen-vuelos" class="nota"></p>
+      <div class="tabla-envoltura">
+        <table>
+          <thead><tr><th>Código</th><th>Aerolínea</th><th>Ruta</th><th>Salida</th><th>Llegada</th>
+            <th>Desde</th><th>Disponibles</th><th></th></tr></thead>
+          <tbody id="tabla-vuelos"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ================= Mapa de asientos ================= -->
+    <section id="vista-asientos" class="vista oculta">
+      <div class="panel mapa-panel">
+        <aside class="info-vuelo">
+          <h1 id="av-ruta"></h1>
+          <p id="av-fecha" class="subtitulo"></p>
+          <div class="itinerario">
+            <div class="duracion" id="av-duracion"></div>
+            <div class="linea"></div>
+            <div class="paradas">
+              <div><strong id="av-sale"></strong> <span id="av-origen"></span></div>
+              <div class="aerolinea"><strong id="av-aerolinea"></strong><br><span id="av-avion" class="nota"></span></div>
+              <div><strong id="av-llega"></strong> <span id="av-destino"></span></div>
+            </div>
+          </div>
+
+          <div class="seleccion">
+            <div class="seleccion-cabecera">
+              <h2 id="sel-titulo">Su selección</h2>
+              <span id="sel-reloj" class="reloj oculta"></span>
+            </div>
+            <p id="sel-vacia" class="nota">Elija hasta 5 asientos en el mapa. Quedan retenidos para usted durante unos minutos mientras completa los datos.</p>
+            <form id="form-pasajeros" novalidate>
+              <div id="lista-pasajeros"></div>
+              <div class="total oculta" id="sel-total"></div>
+              <div class="botones-seleccion">
+                <button type="button" id="btn-cancelar" class="secundario oculta">Cancelar</button>
+                <button type="submit" id="btn-confirmar" class="primario oculta">Confirmar reserva</button>
+              </div>
+            </form>
+            <button type="button" id="btn-volver" class="enlace">‹ Volver a los vuelos</button>
+          </div>
+        </aside>
+
+        <div class="mapa">
+          <div id="pestanas-clase" class="pildoras"></div>
+          <h2 id="mapa-titulo"></h2>
+          <div class="leyenda">
+            <span><i class="asiento DISPONIBLE"></i>Disponible</span>
+            <span><i class="asiento BLOQUEADO"></i>Bloqueado</span>
+            <span><i class="asiento OCUPADO"></i>Ocupado</span>
+            <span><i class="asiento SELECCIONADO"></i>Su selección</span>
+            <span><i class="asiento RESERVADO"></i>Sus reservas</span>
+          </div>
+          <div id="mapa-resumen" class="resumen"></div>
+          <div id="mapa-asientos" class="grilla-asientos"></div>
+          <p id="mapa-actualizado" class="nota pie"></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= Reservas ================= -->
+    <section id="vista-reservas" class="vista oculta">
+      <div class="cabecera-seccion">
+        <h2>Mis reservas</h2>
+        <select id="filtro-estado" aria-label="Filtrar por estado">
+          <option value="">Todas</option><option value="CONFIRMADA">Confirmadas</option>
+          <option value="CANCELADA">Canceladas</option>
+        </select>
+      </div>
+      <div class="tabla-envoltura">
+        <table>
+          <thead><tr><th>#</th><th>Vuelo</th><th>Asientos</th><th>Total</th><th>Estado</th>
+            <th>Fecha reserva</th><th></th></tr></thead>
+          <tbody id="tabla-reservas"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ================= Estado ================= -->
+    <section id="vista-estado" class="vista oculta">
+      <h2>Estado de los servicios</h2>
+      <p class="nota">Backend: <code id="api-url"></code></p>
+      <div id="estado-servicios" class="grilla-estado"></div>
+    </section>
+  </main>
+
+  <!-- Modal: crear cuenta -->
+  <dialog id="modal-registro">
+    <form id="form-registro" novalidate>
+      <h3>Crear cuenta</h3>
+      <div class="campo">
+        <label for="reg-nombre">Nombre completo</label>
+        <input id="reg-nombre" name="nombre" maxlength="60" autocomplete="name" required>
+        <small class="ayuda">Solo letras, de 3 a 60 caracteres. <span class="contador" data-de="reg-nombre"></span></small>
+        <small class="error-campo"></small>
+      </div>
+      <div class="campo">
+        <label for="reg-email">Email</label>
+        <input id="reg-email" name="email" type="text" inputmode="email" maxlength="50" autocomplete="email"
+               autocapitalize="off" spellcheck="false" placeholder="nombre@uta.edu.ec" required>
+        <small class="ayuda">En minúsculas, sin espacios, máximo 50 caracteres. <span class="contador" data-de="reg-email"></span></small>
+        <small class="error-campo"></small>
+      </div>
+      <div class="campo">
+        <label for="reg-password">Contraseña</label>
+        <input id="reg-password" name="password" type="password" maxlength="64" autocomplete="new-password" required>
+        <small class="ayuda">De 8 a 64 caracteres, con al menos una letra y un número, sin espacios.</small>
+        <small class="error-campo"></small>
+      </div>
+      <div class="campo">
+        <label for="reg-confirmar">Confirmar contraseña</label>
+        <input id="reg-confirmar" name="confirmar" type="password" maxlength="64" autocomplete="new-password" required>
+        <label class="ver-clave"><input type="checkbox" data-ver="reg-password reg-confirmar"> Mostrar contraseñas</label>
+        <small class="error-campo"></small>
+      </div>
+      <menu>
+        <button type="button" class="secundario" data-cerrar>Cancelar</button>
+        <button type="submit" class="primario">Crear cuenta</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <!-- Modal genérico: confirmar / detalle -->
+  <dialog id="modal-mensaje">
+    <form method="dialog">
+      <h3 id="mensaje-titulo"></h3>
+      <div id="mensaje-cuerpo"></div>
+      <menu>
+        <button value="cancelar" class="secundario" id="mensaje-cancelar">Cerrar</button>
+        <button value="ok" class="primario" id="mensaje-ok">Confirmar</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <div id="avisos" aria-live="polite"></div>
+  <script src="/config.js"></script>
+  <script src="/static/validaciones.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,34 @@
+# Blueprint de Render: despliega el backend SOA (API Gateway + 5 servicios) como un Web Service.
+# Render > New > Blueprint > seleccionar este repositorio.
+services:
+  - type: web
+    name: aeroreservas-backend
+    runtime: python
+    plan: free
+    region: virginia  # cerca de Supabase us-east-1
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run_backend.py
+    healthCheckPath: /api/salud
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      # Cadena "Session pooler" de Supabase: se ingresa a mano en el panel de Render
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: SERVICE_KEY
+        generateValue: true
+      - key: JWT_HORAS
+        value: "2"
+      - key: RETENCION_MINUTOS
+        value: "5"
+      # Solo el Gateway queda expuesto a Internet (Render le asigna el puerto en PORT);
+      # los servicios internos escuchan en 127.0.0.1 y se comunican por HTTP local
+      - key: GATEWAY_HOST
+        value: 0.0.0.0
+      - key: BIND_HOST
+        value: 127.0.0.1
+      - key: TZ
+        value: America/Guayaquil
