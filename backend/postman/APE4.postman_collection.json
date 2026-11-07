@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "APE4 - Reservas de Vuelos SOA (Flask)",
-    "description": "Pruebas funcionales a través del API Gateway. Cambie base_url por la IP del backend si está en otra computadora.",
+    "description": "Pruebas funcionales a través del API Gateway. base_url: http://127.0.0.1:5000 en local o https://<servicio>.onrender.com en Render.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -94,13 +94,14 @@
               }
             ],
             "url": {
-              "raw": "{{base_url}}/api/usuarios",
+              "raw": "{{base_url}}/api/usuarios/registro",
               "host": [
                 "{{base_url}}"
               ],
               "path": [
                 "api",
-                "usuarios"
+                "usuarios",
+                "registro"
               ]
             },
             "body": {
@@ -299,6 +300,44 @@
                 "api",
                 "auth",
                 "verificar"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Código 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Perfil del usuario",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/usuarios/perfil",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "usuarios",
+                "perfil"
               ]
             }
           },
@@ -765,6 +804,47 @@
           ]
         },
         {
+          "name": "Factura XML de la reserva",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/facturas/reserva/{{reserva_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "facturas",
+                "reserva",
+                "{{reserva_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Código 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Es XML\", () => pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/xml\"));",
+                  "pm.test(\"Tiene IVA\", () => pm.expect(pm.response.text()).to.include(\"<IVA>\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Modificar pasajero",
           "request": {
             "method": "PUT",
@@ -877,6 +957,166 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"Código 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Facturación",
+      "item": [
+        {
+          "name": "Factura XML desde JSON (contrato de clase)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/facturas",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "facturas"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"factura\": {\n    \"numero\": \"F001-000010\",\n    \"fecha\": \"2026-11-07\"\n  },\n  \"cliente\": {\n    \"nombre\": \"Ana López\",\n    \"cedula_ruc\": \"1804567890\"\n  },\n  \"detalles\": [\n    {\n      \"nombre\": \"Laptop\",\n      \"cantidad\": 2,\n      \"precio_unitario\": 500\n    },\n    {\n      \"nombre\": \"Mouse\",\n      \"cantidad\": 1,\n      \"precio_unitario\": 20\n    }\n  ]\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Código 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Total con IVA\", () => pm.expect(pm.response.text()).to.include(\"<Total>1173.00</Total>\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Factura con datos inválidos (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/facturas",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "facturas"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"factura\": {\n    \"numero\": \"F1\"\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Código 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6. Cierre de sesión",
+      "item": [
+        {
+          "name": "Cerrar sesión (revoca el token)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/auth/logout",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "logout"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Código 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Usar token revocado (401)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/reservas",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "reservas"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Código 401\", () => pm.response.to.have.status(401));"
                 ]
               }
             }
