@@ -139,8 +139,8 @@ Las mismas reglas se validan en la app (`app_flutter/lib/utils/validaciones.dart
 
 ### 1. Base de datos en Supabase
 
-1. Cree un proyecto en [supabase.com](https://supabase.com) (región `us-east-1`).
-2. En **Connect > Session pooler**, copie la cadena de conexión `postgresql://postgres.<proyecto>:<clave>@aws-0-<region>.pooler.supabase.com:5432/postgres`.
+1. Cree un proyecto en [supabase.com](https://supabase.com). Este proyecto usa la región `us-west-2`, y Render está configurado en Oregón, la misma zona.
+2. En **Connect > Transaction pooler**, copie la cadena de conexión `postgresql://postgres.<proyecto>:<clave>@aws-1-<region>.pooler.supabase.com:6543/postgres`. El *Session pooler* del plan gratuito admite solo 15 conexiones y no alcanza para los 4 servicios.
 3. Cree `backend/.env` a partir de `backend/.env.example` y pegue la cadena en `DATABASE_URL`.
 4. Cree las tablas y los datos de ejemplo (30 días de vuelos y el usuario `demo@uta.edu.ec` / `demo1234`):
 

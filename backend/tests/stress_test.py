@@ -42,6 +42,7 @@ def limpiar_vuelo_225():
     from common.db import engine
     from sqlalchemy import text
     with engine.begin() as con:
+        con.execute(text("SELECT id FROM vuelos.vuelos WHERE codigo = 'UTA-TEST' FOR UPDATE"))  # bloquea el vuelo antes de tocar asientos
         con.execute(text("DELETE FROM vuelos.asientos WHERE vuelo_id = (SELECT id FROM vuelos.vuelos WHERE codigo = 'UTA-TEST')"))
         con.execute(text("DELETE FROM reservas.reservas WHERE vuelo_id = (SELECT id FROM vuelos.vuelos WHERE codigo = 'UTA-TEST')"))
         con.execute(text("UPDATE vuelos.vuelos SET fecha_salida = LOCALTIMESTAMP + INTERVAL '1 day', fecha_llegada = LOCALTIMESTAMP + INTERVAL '1480 minutes' WHERE codigo = 'UTA-TEST'"))

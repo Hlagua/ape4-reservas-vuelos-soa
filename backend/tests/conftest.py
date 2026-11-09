@@ -50,7 +50,8 @@ def otro_usuario():
 def vuelo_prueba():
     """Vuelo UTA-TEST vacío y con salida mañana (se reinicia en cada prueba)."""
     with engine.begin() as con:
-        vuelo_id = con.execute(text("SELECT id FROM vuelos.vuelos WHERE codigo = 'UTA-TEST'")).scalar()
+        # Se bloquea el vuelo primero, igual que el servicio de Vuelos, para no chocar con el trigger
+        vuelo_id = con.execute(text("SELECT id FROM vuelos.vuelos WHERE codigo = 'UTA-TEST' FOR UPDATE")).scalar()
         con.execute(text("DELETE FROM vuelos.asientos WHERE vuelo_id = :v"), {"v": vuelo_id})
         con.execute(text("DELETE FROM reservas.reservas WHERE vuelo_id = :v"), {"v": vuelo_id})
         con.execute(text("""

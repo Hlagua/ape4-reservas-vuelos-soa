@@ -5,7 +5,7 @@ services:
     name: aeroreservas-backend
     runtime: python
     plan: free
-    region: virginia  # cerca de Supabase us-east-1
+    region: oregon  # misma región que Supabase (us-west-2)
     rootDir: backend
     buildCommand: pip install -r requirements.txt
     startCommand: python run_backend.py
