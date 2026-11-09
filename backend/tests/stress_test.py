@@ -12,7 +12,7 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-BASE_GATEWAY = "http://127.0.0.1:5000"
+BASE_GATEWAY = __import__("os").getenv("API_URL", "http://127.0.0.1:5000").rstrip("/")
 FRONTEND_URL = "http://127.0.0.1:8080"
 
 resultados = {}

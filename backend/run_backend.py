@@ -38,11 +38,33 @@ def comando(modulo, host, puerto):
     return [sys.executable, "-m", "waitress", f"--host={host}", f"--port={puerto}", "--threads=8", f"{modulo}:app"]
 
 
+def esperar_puerto(puerto, segundos=180):
+    """Espera hasta que un servicio interno acepte conexiones en 127.0.0.1:puerto."""
+    limite = time.time() + segundos
+    while time.time() < limite:
+        try:
+            with socket.create_connection(("127.0.0.1", puerto), timeout=1):
+                return True
+        except OSError:
+            time.sleep(0.5)
+    return False
+
+
 def main():
     procesos = []
-    for nombre, modulo, host, puerto in SERVICIOS:
+    internos, gateway = SERVICIOS[:-1], SERVICIOS[-1]
+    for nombre, modulo, host, puerto in internos:
         procesos.append(subprocess.Popen(comando(modulo, host, puerto), cwd=BASE_DIR))
         print(f"  {nombre:<15} {host}:{puerto}", flush=True)
+
+    # El Gateway (puerto público) se abre recién cuando los servicios internos ya escuchan:
+    # así Render no marca el servicio como disponible antes de tiempo
+    for nombre, _, _, puerto in internos:
+        if not esperar_puerto(puerto):
+            print(f"El servicio {nombre} no arrancó a tiempo", flush=True)
+    nombre, modulo, host, puerto = gateway
+    procesos.append(subprocess.Popen(comando(modulo, host, puerto), cwd=BASE_DIR))
+    print(f"  {nombre:<15} {host}:{puerto}", flush=True)
     print(f"\nAPI Gateway para el cliente:  http://{ip_local()}:{config.GATEWAY_PORT}")
     print("Swagger de cada servicio:     http://<ip>:<puerto>/apidocs")
     print("Ctrl+C para detener\n", flush=True)

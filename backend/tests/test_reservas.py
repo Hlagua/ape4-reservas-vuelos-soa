@@ -1,7 +1,7 @@
 """Pruebas del servicio de Reservas e interoperabilidad entre servicios."""
 import requests
 
-from tests.conftest import estado_asiento, pasajero
+from tests.conftest import estado_asiento, pasajero, solo_local
 
 
 def reservar(base, usuario, vuelo_id, pasajeros):
@@ -103,6 +103,7 @@ def test_cancelar_dos_veces(base, usuario, vuelo_prueba):
     assert resp.status_code == 400
 
 
+@solo_local
 def test_servicio_vuelos_caido_responde_503(usuario, vuelo_prueba):
     """Interoperabilidad: si Vuelos no responde, Reservas devuelve 503 controlado."""
     from servicio_reservas.app import app as reservas_app

@@ -1,4 +1,5 @@
 """Pruebas funcionales: requieren el backend levantado con `python run_backend.py`."""
+import os
 import uuid
 
 import pytest
@@ -8,7 +9,10 @@ from sqlalchemy import text
 from common import config
 from common.db import engine
 
-GATEWAY = f"http://127.0.0.1:{config.GATEWAY_PORT}"
+# Por defecto el backend local; para probar el desplegado: API_URL=https://<servicio>.onrender.com
+GATEWAY = os.getenv("API_URL", f"http://127.0.0.1:{config.GATEWAY_PORT}").rstrip("/")
+REMOTO = not GATEWAY.startswith("http://127.0.0.1")
+solo_local = pytest.mark.skipif(REMOTO, reason="Necesita acceso directo a los servicios internos (solo en local)")
 
 
 @pytest.fixture(scope="session", autouse=True)

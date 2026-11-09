@@ -3,6 +3,8 @@ from datetime import date, timedelta
 
 import requests
 
+from tests.conftest import solo_local
+
 from common import config
 
 VUELOS_DIRECTO = f"http://127.0.0.1:{config.VUELOS_PORT}"
@@ -56,6 +58,7 @@ def test_mapa_de_asientos(base, vuelo_prueba):
     assert precios == sorted(precios, reverse=True)  # First es la clase más cara
 
 
+@solo_local
 def test_endpoint_interno_sin_clave(vuelo_prueba):
     resp = requests.post(f"{VUELOS_DIRECTO}/api/vuelos/{vuelo_prueba}/asientos/confirmar",
                          json={"usuario_id": 1, "reserva_id": 1, "asientos": ["31A"]})
