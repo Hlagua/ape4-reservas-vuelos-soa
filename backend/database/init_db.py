@@ -13,9 +13,10 @@ from werkzeug.security import generate_password_hash
 
 from common import config
 from common.db import engine
-from servicio_vuelos.cabina import ASIENTOS, AVION
+from servicio_vuelos.cabina import ASIENTOS, AVION, TOTAL_ASIENTOS
 
-# Cada servicio es dueño de su propio esquema (no hay FK entre esquemas).
+# Cada servicio es dueño de su propio esquema. Como todos viven en la misma base de Supabase,
+# las claves foráneas del modelo de la guía (usuarios 1:N reservas/tokens, vuelos 1:N reservas) se declaran igual.
 # "autenticacion" evita chocar con el esquema "auth" que Supabase ya trae.
 ESQUEMAS = ["usuarios", "autenticacion", "vuelos", "reservas"]
 
@@ -25,7 +26,7 @@ SCRIPT_TABLAS = [
     CREATE TABLE IF NOT EXISTS usuarios.usuarios (
         id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
         nombre VARCHAR(80) NOT NULL,
-        email VARCHAR(150) NOT NULL UNIQUE,
+        correo VARCHAR(150) NOT NULL UNIQUE,
         password_hash VARCHAR(255) NOT NULL,
         fecha_registro TIMESTAMP NOT NULL DEFAULT LOCALTIMESTAMP
     )
@@ -34,7 +35,7 @@ SCRIPT_TABLAS = [
     """
     CREATE TABLE IF NOT EXISTS autenticacion.tokens (
         id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-        usuario_id INTEGER NOT NULL,
+        usuario_id INTEGER NOT NULL REFERENCES usuarios.usuarios(id) ON DELETE CASCADE,
         jti VARCHAR(36) NOT NULL UNIQUE,
         token_hash CHAR(64) NOT NULL,
         fecha_emision TIMESTAMP NOT NULL DEFAULT LOCALTIMESTAMP,
@@ -53,9 +54,17 @@ SCRIPT_TABLAS = [
         destino VARCHAR(60) NOT NULL,
         fecha_salida TIMESTAMP NOT NULL,
         fecha_llegada TIMESTAMP NOT NULL,
-        precio NUMERIC(10,2) NOT NULL
+        -- Columnas del modelo de la guía, derivadas de fecha_salida / fecha_llegada
+        fecha DATE GENERATED ALWAYS AS (CAST(fecha_salida AS DATE)) STORED,
+        hora_salida TIME GENERATED ALWAYS AS (CAST(fecha_salida AS TIME)) STORED,
+        hora_llegada TIME GENERATED ALWAYS AS (CAST(fecha_llegada AS TIME)) STORED,
+        precio NUMERIC(10,2) NOT NULL,
+        asientos_totales INTEGER NOT NULL DEFAULT """ + str(TOTAL_ASIENTOS) + """,
+        -- Se mantiene con triggers sobre vuelos.asientos (ver más abajo)
+        asientos_disponibles INTEGER NOT NULL DEFAULT """ + str(TOTAL_ASIENTOS) + """ CHECK (asientos_disponibles >= 0)
     )
     """,
+    "CREATE INDEX IF NOT EXISTS ix_vuelos_ruta ON vuelos.vuelos (origen, destino, fecha)",
     # Un asiento sin fila en esta tabla está DISPONIBLE.
     # La clave primaria (vuelo_id, asiento) garantiza que dos usuarios
     # nunca puedan tener el mismo asiento al mismo tiempo.
@@ -72,13 +81,29 @@ SCRIPT_TABLAS = [
         CONSTRAINT pk_asientos PRIMARY KEY (vuelo_id, asiento)
     )
     """,
+    "CREATE INDEX IF NOT EXISTS ix_asientos_retenidos ON vuelos.asientos (expira_en) WHERE estado = 'RETENIDO'",
+    # asientos_disponibles = asientos_totales - filas en vuelos.asientos (ocupados, bloqueados y retenidos)
+    """
+    CREATE OR REPLACE FUNCTION vuelos.recalcular_disponibles() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+        UPDATE vuelos.vuelos v
+        SET asientos_disponibles = v.asientos_totales
+            - (SELECT COUNT(*) FROM vuelos.asientos a WHERE a.vuelo_id = v.id)
+        WHERE v.id IN (SELECT DISTINCT vuelo_id FROM cambios);
+        RETURN NULL;
+    END $$
+    """,
+    *[f"""
+    CREATE OR REPLACE TRIGGER tr_disponibles_{evento.lower()} AFTER {evento} ON vuelos.asientos
+    REFERENCING {tabla} TABLE AS cambios FOR EACH STATEMENT EXECUTE FUNCTION vuelos.recalcular_disponibles()
+    """ for evento, tabla in (("INSERT", "NEW"), ("UPDATE", "NEW"), ("DELETE", "OLD"))],
     """
     CREATE TABLE IF NOT EXISTS reservas.reservas (
         id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-        usuario_id INTEGER NOT NULL,
-        vuelo_id INTEGER NOT NULL,
+        usuario_id INTEGER NOT NULL REFERENCES usuarios.usuarios(id),
+        vuelo_id INTEGER NOT NULL REFERENCES vuelos.vuelos(id),
         codigo_vuelo VARCHAR(20) NOT NULL,
-        pasajeros INTEGER NOT NULL,
+        cantidad_asientos INTEGER NOT NULL CHECK (cantidad_asientos > 0),
         total NUMERIC(10,2) NOT NULL,
         estado VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE',
         fecha_reserva TIMESTAMP NOT NULL DEFAULT LOCALTIMESTAMP,
@@ -188,9 +213,9 @@ def _json(filas):
 
 def cargar_usuario_demo():
     with engine.begin() as con:
-        if con.execute(text("SELECT 1 FROM usuarios.usuarios WHERE email = :e"), {"e": USUARIO_DEMO["email"]}).first():
+        if con.execute(text("SELECT 1 FROM usuarios.usuarios WHERE correo = :e"), {"e": USUARIO_DEMO["email"]}).first():
             return
-        con.execute(text("INSERT INTO usuarios.usuarios (nombre, email, password_hash) VALUES (:n, :e, :h)"),
+        con.execute(text("INSERT INTO usuarios.usuarios (nombre, correo, password_hash) VALUES (:n, :e, :h)"),
                     {"n": USUARIO_DEMO["nombre"], "e": USUARIO_DEMO["email"],
                      "h": generate_password_hash(USUARIO_DEMO["password"], method="pbkdf2:sha256")})
     print(f"Usuario demo creado: {USUARIO_DEMO['email']} / {USUARIO_DEMO['password']}")

@@ -56,11 +56,32 @@ def entero_positivo(valor, campo):
     return numero
 
 
-def buscar_vuelo(con, vuelo_id):
-    fila = con.execute(text(f"SELECT {COLUMNAS} FROM vuelos.vuelos WHERE id = :id"), {"id": vuelo_id}).first()
+def buscar_vuelo(con, vuelo_id, bloquear=False):
+    """Con bloquear=True la fila del vuelo queda bloqueada (FOR UPDATE) hasta el fin de la transacción.
+
+    Toda operación que cambia asientos bloquea primero el vuelo: así los cambios de un mismo
+    vuelo se aplican en orden y el trigger que actualiza asientos_disponibles no genera interbloqueos.
+    """
+    sql = f"SELECT {COLUMNAS} FROM vuelos.vuelos WHERE id = :id" + (" FOR UPDATE" if bloquear else "")
+    fila = con.execute(text(sql), {"id": vuelo_id}).first()
     if not fila:
         raise ErrorApi("Vuelo no encontrado", 404)
     return fila
+
+
+def liberar_vencidas(vuelo_id):
+    """Borra las retenciones vencidas del vuelo para que asientos_disponibles quede al día."""
+    consulta = {"v": vuelo_id}
+    with engine.begin() as con:
+        hay = con.execute(text("""
+            SELECT 1 FROM vuelos.asientos
+            WHERE vuelo_id = :v AND estado = 'RETENIDO' AND expira_en <= LOCALTIMESTAMP LIMIT 1
+        """), consulta).first()
+        if hay and buscar_vuelo(con, vuelo_id, bloquear=True):
+            con.execute(text("""
+                DELETE FROM vuelos.asientos
+                WHERE vuelo_id = :v AND estado = 'RETENIDO' AND expira_en <= LOCALTIMESTAMP
+            """), consulta)
 
 
 def validar_asiento(asiento):
@@ -119,7 +140,8 @@ def buscar_vuelos():
     with engine.connect() as con:
         filas = con.execute(text(f"""
             SELECT * FROM (
-                SELECT v.*, :total - (SELECT COUNT(*) FROM vuelos.asientos a
+                -- Disponibilidad en vivo: descuenta solo las retenciones vigentes
+                SELECT {COLUMNAS}, :total - (SELECT COUNT(*) FROM vuelos.asientos a
                                       WHERE a.vuelo_id = v.id AND {ASIENTO_ACTIVO}) AS asientos_disponibles
                 FROM vuelos.vuelos v
             ) x
@@ -178,6 +200,7 @@ def mapa_asientos(vuelo_id):
       404: {description: Vuelo no encontrado}
     """
     usuario = usuario_opcional()
+    liberar_vencidas(vuelo_id)
     with engine.connect() as con:
         vuelo = buscar_vuelo(con, vuelo_id)
         filas = con.execute(text(f"""
@@ -246,7 +269,7 @@ def retener_asiento(vuelo_id, asiento):
     asiento = validar_asiento(asiento)
     try:
         with engine.begin() as con:
-            vuelo = buscar_vuelo(con, vuelo_id)
+            vuelo = buscar_vuelo(con, vuelo_id, bloquear=True)
             if vuelo.fecha_salida <= config.ahora():
                 raise ErrorApi("El vuelo ya despegó", 400)
             # Las retenciones vencidas se liberan antes de intentar tomar el asiento
@@ -296,6 +319,7 @@ def soltar_asiento(vuelo_id, asiento):
     usuario = requerir_token()
     asiento = validar_asiento(asiento)
     with engine.begin() as con:
+        buscar_vuelo(con, vuelo_id, bloquear=True)
         borrados = con.execute(text("""
             DELETE FROM vuelos.asientos
             WHERE vuelo_id = :v AND asiento = :a AND estado = 'RETENIDO' AND usuario_id = :u
@@ -341,7 +365,7 @@ def confirmar_asientos(vuelo_id):
     parametros = {"v": vuelo_id, "u": usuario_id, "r": reserva_id}
     try:
         with engine.begin() as con:
-            vuelo = buscar_vuelo(con, vuelo_id)
+            vuelo = buscar_vuelo(con, vuelo_id, bloquear=True)
             # FOR UPDATE bloquea las filas consultadas hasta terminar la transacción;
             # si un asiento libre lo toma otro usuario a la vez, la clave primaria rechaza el INSERT
             ocupados = con.execute(text(f"""
@@ -406,6 +430,7 @@ def liberar_asientos(vuelo_id):
         parametros["asientos"] = validar_lista_asientos(data)
         sentencia = text(sql + " AND asiento IN :asientos").bindparams(bindparam("asientos", expanding=True))
     with engine.begin() as con:
+        buscar_vuelo(con, vuelo_id, bloquear=True)
         liberados = con.execute(sentencia, parametros).rowcount
     return jsonify({"mensaje": "Asientos liberados", "liberados": liberados})
 

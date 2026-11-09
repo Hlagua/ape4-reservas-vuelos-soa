@@ -28,6 +28,10 @@
     {
       "key": "reserva_id",
       "value": ""
+    },
+    {
+      "key": "usuario_id",
+      "value": ""
     }
   ],
   "event": [
@@ -271,7 +275,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"Código 200\", () => pm.response.to.have.status(200));",
-                  "pm.collectionVariables.set(\"token\", pm.response.json().token);"
+                  "pm.collectionVariables.set(\"token\", pm.response.json().token);",
+                  "pm.collectionVariables.set(\"usuario_id\", pm.response.json().usuario.id);"
                 ]
               }
             }
@@ -681,6 +686,48 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"Código 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reservar con formato de la guía {usuario_id, vuelo_id, cantidad}",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/reservas",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "reservas"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"usuario_id\": {{usuario_id}},\n  \"vuelo_id\": {{vuelo_id}},\n  \"cantidad\": 2\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Código 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"Respuesta de la guía\", () => { const r = pm.response.json(); pm.expect(r.mensaje).to.eql(\"Reserva creada\"); pm.expect(r.estado).to.eql(\"confirmada\"); pm.expect(r).to.have.property(\"reserva_id\"); pm.expect(r).to.have.property(\"total\"); });"
                 ]
               }
             }

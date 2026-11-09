@@ -20,7 +20,7 @@ app = crear_app(__name__, "Reservas", "Reserva de asientos y gestión de reserva
 app.config["VUELOS_URL"] = config.VUELOS_URL
 
 MAX_PASAJEROS = config.MAX_ASIENTOS
-COLUMNAS = """id, usuario_id, vuelo_id, codigo_vuelo, pasajeros, total, estado,
+COLUMNAS = """id, usuario_id, vuelo_id, codigo_vuelo, cantidad_asientos, total, estado,
               fecha_reserva, fecha_actualizacion"""
 
 
@@ -30,7 +30,8 @@ def reserva_a_dict(fila, pasajeros=None):
         "usuario_id": fila.usuario_id,
         "vuelo_id": fila.vuelo_id,
         "codigo_vuelo": fila.codigo_vuelo,
-        "pasajeros": fila.pasajeros,
+        "cantidad_asientos": fila.cantidad_asientos,
+        "pasajeros": fila.cantidad_asientos,
         "total": float(fila.total),
         "estado": fila.estado,
         "fecha_reserva": fila.fecha_reserva.isoformat(timespec="seconds"),
@@ -153,17 +154,22 @@ def crear_reserva():
     tags: [Reservas]
     security: [{Bearer: []}]
     description: >
-      Los asientos deben estar seleccionados (retenidos) por el usuario o libres.
-      Si otro usuario los tomó primero se responde 409.
+      Dos formatos de petición.
+      (1) Con pasajeros: cada uno con su asiento (seleccionado/retenido o libre) y documento.
+      (2) Formato de la guía: {usuario_id, vuelo_id, cantidad}; los asientos se asignan
+      automáticamente y se responde {mensaje, reserva_id, total, estado}.
+      Si otro usuario tomó un asiento primero se responde 409.
     parameters:
       - in: body
         name: body
         required: true
         schema:
           type: object
-          required: [vuelo_id, pasajeros]
+          required: [vuelo_id]
           properties:
-            vuelo_id: {type: integer, example: 1}
+            usuario_id: {type: integer, example: 1, description: "Formato (2); debe coincidir con el token"}
+            vuelo_id: {type: integer, example: 10}
+            cantidad: {type: integer, example: 2, description: "Formato (2): número de asientos (1 a 5)"}
             pasajeros:
               type: array
               items:
@@ -187,16 +193,25 @@ def crear_reserva():
         vuelo_id = int(data.get("vuelo_id"))
     except (TypeError, ValueError):
         raise ErrorApi("El campo 'vuelo_id' es obligatorio y debe ser un número entero", 400)
+    if "cantidad" in data and "pasajeros" not in data:
+        return reservar_por_cantidad(usuario, data, vuelo_id)
     pasajeros = leer_pasajeros(data)
 
     vuelo = obtener_vuelo(vuelo_id)
     if datetime.fromisoformat(vuelo["fecha_salida"]) <= config.ahora():
         raise ErrorApi("El vuelo ya despegó, no se puede reservar", 400)
+    fila, detalle = registrar_reserva(usuario, vuelo, pasajeros)
+    return jsonify({"mensaje": "Reserva creada correctamente", "reserva": reserva_a_dict(fila, detalle),
+                    "vuelo": vuelo}), 201
 
+
+def registrar_reserva(usuario, vuelo, pasajeros):
+    """Crea la reserva confirmada con sus pasajeros. Devuelve (fila de la reserva, pasajeros)."""
+    vuelo_id = vuelo["id"]
     # 1) Se registra la reserva como PENDIENTE para obtener su id
     with engine.begin() as con:
         reserva_id = con.execute(text("""
-            INSERT INTO reservas.reservas (usuario_id, vuelo_id, codigo_vuelo, pasajeros, total)
+            INSERT INTO reservas.reservas (usuario_id, vuelo_id, codigo_vuelo, cantidad_asientos, total)
             VALUES (:u, :v, :c, :n, 0) RETURNING id
         """), {"u": usuario["id"], "v": vuelo_id, "c": vuelo["codigo"], "n": len(pasajeros)}).scalar()
 
@@ -223,9 +238,56 @@ def crear_reserva():
         with engine.begin() as con:
             con.execute(text("DELETE FROM reservas.reservas WHERE id = :id"), {"id": reserva_id})
         raise
+    return fila, detalle
 
-    return jsonify({"mensaje": "Reserva creada correctamente", "reserva": reserva_a_dict(fila, detalle),
-                    "vuelo": vuelo}), 201
+
+# Orden de preferencia al asignar asientos automáticamente
+ORDEN_CLASES = ["ECONOMY", "PREMIUM", "BUSINESS", "FIRST"]
+CONSUMIDOR_FINAL = {"tipo_documento": "CF", "documento": "9999999999999"}
+
+
+def elegir_asientos(vuelo_id, cantidad):
+    """Primeros asientos libres según el mapa del servicio de Vuelos (Economy primero)."""
+    mapa = respuesta_vuelos(llamar_servicio("GET", url_vuelos(f"{vuelo_id}/asientos")))
+    ocupados = mapa["estados"]
+    clases = sorted(mapa["clases"], key=lambda c: ORDEN_CLASES.index(c["clase"]))
+    libres = [f"{fila}{letra}" for c in clases for fila in c["filas"] for grupo in c["grupos"] for letra in grupo
+              if f"{fila}{letra}" not in ocupados]
+    if len(libres) < cantidad:
+        raise ErrorApi("No hay asientos suficientes", 409, {"asientos_disponibles": len(libres), "solicitados": cantidad})
+    return libres[:cantidad]
+
+
+def reservar_por_cantidad(usuario, data, vuelo_id):
+    """Formato del ejemplo de la guía: {usuario_id, vuelo_id, cantidad}."""
+    if data.get("usuario_id") is not None and data.get("usuario_id") != usuario["id"]:
+        raise ErrorApi("El usuario_id no coincide con el usuario del token", 403)
+    cantidad = data.get("cantidad")
+    if not isinstance(cantidad, int) or isinstance(cantidad, bool) or not 1 <= cantidad <= MAX_PASAJEROS:
+        raise ErrorApi(f"El campo 'cantidad' debe ser un número entero entre 1 y {MAX_PASAJEROS}", 400)
+
+    vuelo = obtener_vuelo(vuelo_id)
+    if datetime.fromisoformat(vuelo["fecha_salida"]) <= config.ahora():
+        raise ErrorApi("El vuelo ya despegó, no se puede reservar", 400)
+
+    # Si otro usuario toma alguno de los asientos elegidos a la vez, se vuelve a elegir (hasta 3 intentos)
+    for intento in range(3):
+        asientos = elegir_asientos(vuelo_id, cantidad)
+        pasajeros = [{"asiento": a, "nombre": usuario["nombre"], **CONSUMIDOR_FINAL} for a in asientos]
+        try:
+            fila, detalle = registrar_reserva(usuario, vuelo, pasajeros)
+            break
+        except ErrorApi as e:
+            if e.codigo != 409 or intento == 2:
+                raise
+    return jsonify({
+        "mensaje": "Reserva creada",
+        "reserva_id": fila.id,
+        "total": float(fila.total),
+        "estado": "confirmada",
+        "cantidad": fila.cantidad_asientos,
+        "asientos": [p.asiento for p in detalle],
+    }), 201
 
 
 @app.get("/api/reservas")
@@ -324,7 +386,7 @@ def modificar_reserva(reserva_id):
             total = guardar_pasajeros(con, reserva_id, pasajeros, precios)
             fila = con.execute(text(f"""
                 UPDATE reservas.reservas
-                SET pasajeros = :n, total = :t, fecha_actualizacion = LOCALTIMESTAMP
+                SET cantidad_asientos = :n, total = :t, fecha_actualizacion = LOCALTIMESTAMP
                 WHERE id = :id AND estado = 'CONFIRMADA'
                 RETURNING {', '.join(c.strip() for c in COLUMNAS.split(','))}
             """), {"n": len(pasajeros), "t": total, "id": reserva_id}).first()

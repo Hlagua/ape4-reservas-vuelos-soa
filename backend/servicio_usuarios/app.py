@@ -26,7 +26,7 @@ def usuario_a_dict(fila):
     return {
         "id": fila.id,
         "nombre": fila.nombre,
-        "email": fila.email,
+        "email": fila.correo,
         "fecha_registro": fila.fecha_registro.isoformat(timespec="seconds"),
     }
 
@@ -68,13 +68,13 @@ def registrar_usuario():
         raise ErrorApi("Datos inválidos", 400, errores)
 
     with engine.begin() as con:
-        existe = con.execute(text("SELECT 1 FROM usuarios.usuarios WHERE email = :email"), {"email": email}).first()
+        existe = con.execute(text("SELECT 1 FROM usuarios.usuarios WHERE correo = :email"), {"email": email}).first()
         if existe:
             raise ErrorApi("El email ya está registrado", 409)
         fila = con.execute(text("""
-            INSERT INTO usuarios.usuarios (nombre, email, password_hash)
+            INSERT INTO usuarios.usuarios (nombre, correo, password_hash)
             VALUES (:nombre, :email, :hash)
-            RETURNING id, nombre, email, fecha_registro
+            RETURNING id, nombre, correo, fecha_registro
         """), {"nombre": nombre, "email": email, "hash": cifrar(password)}).first()
 
     return jsonify({"mensaje": "Usuario registrado correctamente", "usuario": usuario_a_dict(fila)}), 201
@@ -116,7 +116,7 @@ def obtener_usuario(usuario_id):
 def buscar_usuario(usuario_id):
     with engine.connect() as con:
         fila = con.execute(text("""
-            SELECT id, nombre, email, fecha_registro FROM usuarios.usuarios WHERE id = :id
+            SELECT id, nombre, correo, fecha_registro FROM usuarios.usuarios WHERE id = :id
         """), {"id": usuario_id}).first()
     if not fila:
         raise ErrorApi("Usuario no encontrado", 404)
@@ -148,7 +148,7 @@ def validar_credenciales():
     email = str(data.get("email", "")).strip().lower()
     with engine.connect() as con:
         fila = con.execute(text("""
-            SELECT id, nombre, email, password_hash, fecha_registro FROM usuarios.usuarios WHERE email = :email
+            SELECT id, nombre, correo, password_hash, fecha_registro FROM usuarios.usuarios WHERE correo = :email
         """), {"email": email}).first()
     if not fila or not check_password_hash(fila.password_hash, str(data.get("password", ""))):
         raise ErrorApi("Credenciales inválidas", 401)

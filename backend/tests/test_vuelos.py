@@ -23,6 +23,12 @@ def test_buscar_con_filtros(base):
     assert all(v["fecha_salida"].startswith(fecha) for v in vuelos)
 
 
+def test_buscar_por_pasajeros(base):
+    resp = requests.get(f"{base}/api/vuelos", params={"origen": "Quito", "pasajeros": 5})
+    assert resp.status_code == 200
+    assert resp.json()["vuelos"] and all(v["asientos_disponibles"] >= 5 for v in resp.json()["vuelos"])
+
+
 def test_buscar_fecha_invalida(base):
     assert requests.get(f"{base}/api/vuelos", params={"fecha": "27-10-2026"}).status_code == 400
 

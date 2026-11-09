@@ -59,16 +59,21 @@ frontend/     cliente web anterior (HTML + JS), ya no es el cliente principal
 
 ## Modelo de datos (Supabase / PostgreSQL)
 
+Sigue el modelo de la guía (usuarios, vuelos, reservas y tokens), más las tablas de asientos y pasajeros que necesita el mapa de asientos:
+
 | Esquema.tabla | Dueño | Columnas principales |
 |---|---|---|
-| `usuarios.usuarios` | Usuarios | id, nombre, email (único), password_hash, fecha_registro |
-| `autenticacion.tokens` | Autenticación | id, usuario_id, jti, token_hash (SHA-256), fecha_emision, expiracion, estado (ACTIVO/REVOCADO) |
-| `vuelos.vuelos` | Vuelos | id, codigo, aerolinea, avion, origen, destino, fecha_salida, fecha_llegada, precio |
-| `vuelos.asientos` | Vuelos | **PK (vuelo_id, asiento)**, clase, estado (BLOQUEADO/RETENIDO/OCUPADO), usuario_id, reserva_id, expira_en |
-| `reservas.reservas` | Reservas | id, usuario_id, vuelo_id, codigo_vuelo, pasajeros, total, estado, fecha_reserva |
-| `reservas.pasajeros` | Reservas | id, reserva_id (FK), asiento, clase, nombre, tipo_documento, documento, precio |
+| `usuarios.usuarios` | Usuarios | **id** (PK), nombre, **correo** (único), password_hash, fecha_registro |
+| `autenticacion.tokens` | Autenticación | **id** (PK), **usuario_id** (FK), jti, token_hash (SHA-256 del JWT), fecha_emision, expiracion, estado (ACTIVO/REVOCADO) |
+| `vuelos.vuelos` | Vuelos | **id** (PK), codigo, aerolinea, origen, destino, **fecha**, **hora_salida**, **hora_llegada**, precio, asientos_totales, **asientos_disponibles** |
+| `vuelos.asientos` | Vuelos | **PK (vuelo_id, asiento)**, vuelo_id (FK), clase, estado (BLOQUEADO/RETENIDO/OCUPADO), usuario_id, reserva_id, expira_en |
+| `reservas.reservas` | Reservas | **id** (PK), **usuario_id** (FK), **vuelo_id** (FK), **cantidad_asientos**, total, estado, fecha_reserva |
+| `reservas.pasajeros` | Reservas | id (PK), reserva_id (FK), asiento, clase, nombre, tipo_documento, documento, precio |
 
-Relaciones lógicas: un usuario tiene muchos tokens y muchas reservas; un vuelo tiene muchos asientos y muchas reservas; una reserva tiene de 1 a 5 pasajeros. Entre esquemas no hay claves foráneas, porque cada servicio es dueño de sus datos.
+- **Relaciones 1:N:** un usuario tiene muchas reservas y muchos tokens; un vuelo tiene muchas reservas y muchos asientos; una reserva tiene de 1 a 5 pasajeros.
+- **Columnas derivadas:** `fecha`, `hora_salida` y `hora_llegada` se calculan de `fecha_salida` y `fecha_llegada`.
+- **`asientos_disponibles`:** la mantienen actualizada triggers sobre `vuelos.asientos`.
+- **Token:** por seguridad no se guarda el JWT, sino su huella SHA-256.
 
 ## Concurrencia en la selección de asientos
 
@@ -95,6 +100,7 @@ Todas las rutas se consumen a través del Gateway: `https://<servicio>.onrender.
 | Vuelos | `GET /api/vuelos/{id}/asientos` | Bearer opcional | Mapa de asientos por clase |
 | Vuelos | `POST` / `DELETE /api/vuelos/{id}/asientos/{asiento}/retener` | Bearer | Seleccionar o soltar un asiento |
 | Reservas | `POST /api/reservas` | Bearer | Reservar `{vuelo_id, pasajeros:[{asiento, nombre, tipo_documento, documento}]}` |
+| Reservas | `POST /api/reservas` | Bearer | Formato de la guía: `{usuario_id, vuelo_id, cantidad}` → `{mensaje, reserva_id, total, estado: "confirmada"}` (asigna los asientos automáticamente) |
 | Reservas | `GET /api/reservas` · `GET /api/reservas/{id}` | Bearer | Gestión: listar y consultar |
 | Reservas | `PUT /api/reservas/{id}` · `DELETE /api/reservas/{id}` | Bearer | Gestión: modificar y cancelar |
 | Facturación | `POST /api/facturas` | — | JSON `{factura, cliente, detalles}` → **XML** con IVA 15 % |
