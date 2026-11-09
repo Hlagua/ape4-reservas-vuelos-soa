@@ -20,6 +20,9 @@ services:
         generateValue: true
       - key: SERVICE_KEY
         generateValue: true
+      # Clave para detener/iniciar servicios (pruebas de tolerancia a fallos): se ingresa a mano
+      - key: ADMIN_KEY
+        sync: false
       - key: JWT_HORAS
         value: "2"
       - key: RETENCION_MINUTOS

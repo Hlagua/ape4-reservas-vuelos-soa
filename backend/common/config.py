@@ -21,6 +21,9 @@ ZONA_HORARIA_BD = os.getenv("ZONA_HORARIA_BD", "-05")
 JWT_SECRET = os.getenv("JWT_SECRET", "cambiar-esta-clave")
 JWT_HORAS = int(os.getenv("JWT_HORAS", "2"))
 SERVICE_KEY = os.getenv("SERVICE_KEY", "clave-interna")
+# Clave para detener/iniciar servicios desde el Gateway (pruebas de tolerancia a fallos).
+# Si está vacía, la administración queda deshabilitada.
+ADMIN_KEY = os.getenv("ADMIN_KEY", "")
 
 # Host de los servicios internos y del Gateway (en Render los internos quedan en 127.0.0.1)
 BIND_HOST = os.getenv("BIND_HOST", "0.0.0.0")
@@ -37,6 +40,8 @@ AUTH_PORT = int(os.getenv("AUTH_PORT", "5002"))
 VUELOS_PORT = int(os.getenv("VUELOS_PORT", "5003"))
 RESERVAS_PORT = int(os.getenv("RESERVAS_PORT", "5004"))
 FACTURACION_PORT = int(os.getenv("FACTURACION_PORT", "5005"))
+# Control interno del supervisor (run_backend.py); solo escucha en 127.0.0.1
+SUPERVISOR_PORT = int(os.getenv("SUPERVISOR_PORT", "5099"))
 
 # Registro de servicios: dónde vive cada proveedor
 USUARIOS_URL = os.getenv("USUARIOS_URL", f"http://127.0.0.1:{USUARIOS_PORT}")
@@ -44,6 +49,7 @@ AUTH_URL = os.getenv("AUTH_URL", f"http://127.0.0.1:{AUTH_PORT}")
 VUELOS_URL = os.getenv("VUELOS_URL", f"http://127.0.0.1:{VUELOS_PORT}")
 RESERVAS_URL = os.getenv("RESERVAS_URL", f"http://127.0.0.1:{RESERVAS_PORT}")
 FACTURACION_URL = os.getenv("FACTURACION_URL", f"http://127.0.0.1:{FACTURACION_PORT}")
+SUPERVISOR_URL = f"http://127.0.0.1:{SUPERVISOR_PORT}"
 
 
 def ahora():

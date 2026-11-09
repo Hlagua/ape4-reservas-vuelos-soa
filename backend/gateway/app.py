@@ -4,6 +4,8 @@ Enruta cada petición /api/<servicio>/... al servicio proveedor correspondiente
 (Usuarios, Auth, Vuelos, Reservas, Facturación). Habilita CORS para que el frontend pueda
 ejecutarse en otra computadora.
 """
+import hmac
+
 from flask import Flask, Response, jsonify, request
 
 from common import config
@@ -51,6 +53,37 @@ def salud():
         except ErrorApi:
             estado[nombre] = {"puerto": puerto, "estado": "caído"}
     return jsonify({"gateway": "activo", "servicios": estado})
+
+
+# ---------- Administración: pruebas de tolerancia a fallos ----------
+
+def requerir_admin():
+    if not config.ADMIN_KEY:
+        raise ErrorApi("La administración está deshabilitada (falta ADMIN_KEY)", 403)
+    if not hmac.compare_digest(request.headers.get("X-Admin-Key", ""), config.ADMIN_KEY):
+        raise ErrorApi("Clave de administración inválida", 403)
+
+
+def supervisor(metodo, ruta):
+    """Reenvía la orden al supervisor (run_backend.py), que solo escucha en 127.0.0.1."""
+    resp = llamar_servicio(metodo, f"{config.SUPERVISOR_URL}{ruta}", interno=True)
+    return Response(resp.content, status=resp.status_code, content_type="application/json")
+
+
+@app.get("/api/admin/servicios")
+def admin_estado():
+    """Estado de los procesos de cada servicio (requiere X-Admin-Key)."""
+    requerir_admin()
+    return supervisor("GET", "/servicios")
+
+
+@app.post("/api/admin/servicios/<clave>/<accion>")
+def admin_controlar(clave, accion):
+    """Detiene o inicia un servicio interno para probar la tolerancia a fallos (requiere X-Admin-Key)."""
+    requerir_admin()
+    if accion not in ("detener", "iniciar"):
+        raise ErrorApi("La acción debe ser 'detener' o 'iniciar'", 400)
+    return supervisor("POST", f"/servicios/{clave}/{accion}")
 
 
 @app.route("/api/<servicio>", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])

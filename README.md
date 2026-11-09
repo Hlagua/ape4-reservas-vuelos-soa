@@ -194,6 +194,47 @@ flutter run --dart-define=API_URL=https://aeroreservas-backend.onrender.com
 2. Seleccione un asiento en el primero: en menos de 3 segundos aparece en amarillo en el segundo.
 3. Si el segundo lo intenta tomar, recibe *"El asiento acaba de ser tomado por otro usuario"*.
 
+## Tolerancia a fallos: apagar un servicio
+
+Cada servicio es un proceso independiente. `run_backend.py` funciona como **supervisor**:
+
+- Si un servicio interno se cae, **los demás siguen funcionando**. El Gateway responde `503 Servicio no disponible` solo en lo que dependa del servicio caído.
+- Si se cae el **API Gateway**, el supervisor lo **vuelve a levantar** automáticamente (en menos de un segundo).
+
+Para demostrarlo se puede apagar y encender cualquier servicio, en local o en Render. Se necesita la clave `ADMIN_KEY`, que debe estar en `backend/.env` y en las variables de entorno de Render:
+
+```bash
+python servicio.py estado --url https://aeroreservas-backend.onrender.com
+```
+```bash
+python servicio.py detener vuelos --url https://aeroreservas-backend.onrender.com
+```
+```bash
+python servicio.py iniciar vuelos --url https://aeroreservas-backend.onrender.com
+```
+
+Mientras un servicio está apagado, `GET /api/salud` lo muestra como `caído`, y la pantalla **Estado** de la app también.
+
+| Servicio apagado | Sigue funcionando | Responde 503 |
+|---|---|---|
+| Facturación | Login, vuelos, asientos, reservas, perfil | Factura XML |
+| Reservas | Login, búsqueda, mapa y selección de asientos | Reservar, Mis reservas, factura de reserva |
+| Vuelos | Login, perfil, lista de Mis reservas | Búsqueda, mapa, reservar, cancelar (sin dejar datos a medias) |
+| Usuarios | Con sesión ya iniciada: buscar, reservar, facturar | Registro, login, perfil |
+| Autenticación | Búsqueda de vuelos y mapa sin sesión | Login y todo lo que requiere token |
+
+Esta tabla la comprueba automáticamente `tests/test_tolerancia_fallos.py`, que apaga cada servicio, verifica el comportamiento y lo vuelve a encender.
+
+### El API Gateway
+
+El Gateway es el **único punto de entrada**: si se cae, la app no llega a ningún servicio (es un *punto único de fallo*). En este proyecto se mitiga así:
+
+1. **Es liviano y sin estado:** solo enruta peticiones; no tiene base de datos ni lógica de negocio, así que es difícil que falle.
+2. **Se reinicia solo:** el supervisor lo revive en cuanto se cae, y Render además reinicia el contenedor si `GET /api/salud` deja de responder.
+3. **No se puede apagar desde la administración:** solo se pueden detener los servicios internos.
+
+En un sistema en producción se usarían **varias instancias del Gateway detrás de un balanceador de carga**, para que la caída de una no corte el servicio. En Render eso requiere un plan pago con más de una instancia.
+
 ## Pruebas
 
 Con el backend levantado:
