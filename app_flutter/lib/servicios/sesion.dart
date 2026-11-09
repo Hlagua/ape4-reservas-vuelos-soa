@@ -6,8 +6,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api.dart';
 
-/// Se puede fijar al compilar: flutter run --dart-define=API_URL=http://192.168.1.20:5000
-const String apiPorDefecto = String.fromEnvironment('API_URL', defaultValue: 'http://127.0.0.1:5000');
+/// Backend desplegado en Render; para uno local: flutter run --dart-define=API_URL=http://127.0.0.1:5000
+const String apiPorDefecto =
+    String.fromEnvironment('API_URL', defaultValue: 'https://aeroreservas-backend.onrender.com');
 
 class Sesion extends ChangeNotifier {
   Sesion._(this.api, this._prefs);
