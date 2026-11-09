@@ -61,7 +61,7 @@ class EtiquetaEstado extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bien = estado == 'CONFIRMADA' || estado == 'activo';
+    final bien = estado == 'CONFIRMADA' || estado == 'activo' || estado == 'activa';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
       decoration: BoxDecoration(

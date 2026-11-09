@@ -16,7 +16,7 @@ from common.db import engine
 from common.errores import ErrorApi, leer_json
 from common.validaciones import validar_documento, validar_nombre
 
-app = crear_app(__name__, "Reservas", "Reserva de asientos y gestión de reservas del usuario")
+app = crear_app(__name__, "Reservas", "Reserva de asientos y gestión de reservas del usuario", usa_bd=True)
 app.config["VUELOS_URL"] = config.VUELOS_URL
 
 MAX_PASAJEROS = config.MAX_ASIENTOS

@@ -39,8 +39,13 @@ def requerir_token():
     if not auth.startswith("Bearer "):
         raise ErrorApi("No autorizado. Token inválido o no enviado", 401)
     resp = llamar_servicio("GET", f"{config.AUTH_URL}/api/auth/verificar", headers={"Authorization": auth})
-    if resp.status_code != 200:
+    if resp.status_code == 401:
         raise ErrorApi("No autorizado. Token inválido o expirado", 401)
+    if resp.status_code != 200:
+        # Autenticación no pudo verificar (por ejemplo, base de datos caída): no es culpa del token,
+        # así que no se responde 401 (el cliente cerraría la sesión) sino 503
+        cuerpo = resp.json() if resp.headers.get("Content-Type", "").startswith("application/json") else {}
+        raise ErrorApi(cuerpo.get("error", "Servicio de autenticación no disponible"), 503, cuerpo.get("detalle"))
     return resp.json()["usuario"]
 
 

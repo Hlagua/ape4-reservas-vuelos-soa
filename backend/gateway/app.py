@@ -5,6 +5,7 @@ Enruta cada petición /api/<servicio>/... al servicio proveedor correspondiente
 ejecutarse en otra computadora.
 """
 import hmac
+from concurrent.futures import ThreadPoolExecutor
 
 from flask import Flask, Response, jsonify, request
 
@@ -32,7 +33,7 @@ CABECERAS_PERMITIDAS = {"authorization", "content-type", "accept"}
 @app.after_request
 def cors(resp):
     resp.headers["Access-Control-Allow-Origin"] = "*"
-    resp.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+    resp.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, X-Admin-Key"
     resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
     return resp
 
@@ -44,15 +45,23 @@ def inicio():
 
 @app.get("/api/salud")
 def salud():
-    """Consulta el estado de todos los servicios."""
-    estado = {}
-    for nombre, (url, puerto) in RUTAS.items():
+    """Consulta en paralelo el estado de todos los servicios y de la base de datos."""
+    def consultar(item):
+        nombre, (url, puerto) = item
         try:
             resp = llamar_servicio("GET", f"{url}/api/salud")
-            estado[nombre] = {"puerto": puerto, "estado": "activo" if resp.ok else "error"}
+            datos = resp.json() if resp.ok else {}
+            return nombre, {"puerto": puerto, "estado": "activo" if resp.ok else "error",
+                            "base_datos": datos.get("base_datos")}
         except ErrorApi:
-            estado[nombre] = {"puerto": puerto, "estado": "caído"}
-    return jsonify({"gateway": "activo", "servicios": estado})
+            return nombre, {"puerto": puerto, "estado": "caído", "base_datos": None}
+
+    with ThreadPoolExecutor(max_workers=len(RUTAS)) as hilos:
+        estado = dict(hilos.map(consultar, RUTAS.items()))
+    # La base es compartida: basta con que un servicio pueda conectarse para saber que responde
+    reportes = [s.pop("base_datos") for s in estado.values()]
+    base = "activa" if "activa" in reportes else ("caída" if "caída" in reportes else "desconocido")
+    return jsonify({"gateway": "activo", "base_datos": base, "servicios": estado})
 
 
 # ---------- Administración: pruebas de tolerancia a fallos ----------

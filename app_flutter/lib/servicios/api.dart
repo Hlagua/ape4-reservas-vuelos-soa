@@ -36,11 +36,13 @@ class Api {
   static const _tiempoMaximo = Duration(seconds: 60);
   final http.Client _cliente = http.Client();
 
-  Future<http.Response> _enviar(String metodo, String ruta, {Object? cuerpo, Map<String, String>? query}) async {
+  Future<http.Response> _enviar(String metodo, String ruta,
+      {Object? cuerpo, Map<String, String>? query, Map<String, String>? cabecerasExtra}) async {
     final uri = Uri.parse('$baseUrl$ruta').replace(queryParameters: query);
     final cabeceras = <String, String>{
       if (token != null) 'Authorization': 'Bearer $token',
       if (cuerpo != null) 'Content-Type': 'application/json',
+      ...?cabecerasExtra,
     };
     final peticion = http.Request(metodo, uri)..headers.addAll(cabeceras);
     if (cuerpo != null) peticion.body = jsonEncode(cuerpo);
@@ -58,8 +60,9 @@ class Api {
     return resp;
   }
 
-  Future<Map<String, dynamic>> _pedir(String metodo, String ruta, {Object? cuerpo, Map<String, String>? query}) async {
-    final resp = await _enviar(metodo, ruta, cuerpo: cuerpo, query: query);
+  Future<Map<String, dynamic>> _pedir(String metodo, String ruta,
+      {Object? cuerpo, Map<String, String>? query, Map<String, String>? cabecerasExtra}) async {
+    final resp = await _enviar(metodo, ruta, cuerpo: cuerpo, query: query, cabecerasExtra: cabecerasExtra);
     if (resp.statusCode >= 200 && resp.statusCode < 300) return _json(resp);
     throw _error(resp, ruta);
   }
@@ -140,4 +143,13 @@ class Api {
   // ---------- Estado ----------
 
   Future<Map<String, dynamic>> salud() => _pedir('GET', '/api/salud');
+
+  // ---------- Administración (pruebas de tolerancia a fallos, requiere ADMIN_KEY) ----------
+
+  Future<Map<String, dynamic>> adminServicios(String clave) =>
+      _pedir('GET', '/api/admin/servicios', cabecerasExtra: {'X-Admin-Key': clave});
+
+  /// accion: 'detener' o 'iniciar'.
+  Future<Map<String, dynamic>> adminControlar(String clave, String servicio, String accion) =>
+      _pedir('POST', '/api/admin/servicios/$servicio/$accion', cabecerasExtra: {'X-Admin-Key': clave});
 }

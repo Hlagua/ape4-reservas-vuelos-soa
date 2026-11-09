@@ -215,6 +215,12 @@ python servicio.py iniciar vuelos --url https://aeroreservas-backend.onrender.co
 
 Mientras un servicio está apagado, `GET /api/salud` lo muestra como `caído`, y la pantalla **Estado** de la app también.
 
+También se puede hacer **desde la app**: en **Estado**, el botón de administración abre la pantalla *Administración de servicios*. Ahí se ingresa la clave `ADMIN_KEY` y cada servicio tiene un interruptor para apagarlo o encenderlo.
+
+### Caída de la base de datos
+
+Si Supabase no responde, los servicios contestan en menos de 5 s con `503 Base de datos no disponible`, en vez de quedarse esperando. La sesión del usuario **no se pierde**: solo un token inválido cierra la sesión. `GET /api/salud` y la pantalla **Estado** muestran `base_datos: caída`. Cuando la base vuelve, el sistema se recupera solo, sin reiniciar nada.
+
 | Servicio apagado | Sigue funcionando | Responde 503 |
 |---|---|---|
 | Facturación | Login, vuelos, asientos, reservas, perfil | Factura XML |

@@ -20,7 +20,7 @@ from common.db import engine
 from common.errores import ErrorApi, leer_json
 from servicio_vuelos.cabina import ASIENTOS, AVION, CLASES, TOTAL_ASIENTOS, precio_asiento
 
-app = crear_app(__name__, "Vuelos", "Consulta de vuelos, mapa de asientos y control de asientos")
+app = crear_app(__name__, "Vuelos", "Consulta de vuelos, mapa de asientos y control de asientos", usa_bd=True)
 
 MAX_ASIENTOS_POR_USUARIO = config.MAX_ASIENTOS
 COLUMNAS = "id, codigo, aerolinea, avion, origen, destino, fecha_salida, fecha_llegada, precio"

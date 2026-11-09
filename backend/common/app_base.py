@@ -5,7 +5,7 @@ from flask import Flask, jsonify
 from common.errores import registrar_manejadores
 
 
-def crear_app(import_name, nombre_servicio, descripcion, **kwargs):
+def crear_app(import_name, nombre_servicio, descripcion, usa_bd=False, **kwargs):
     app = Flask(import_name, **kwargs)
     app.json.ensure_ascii = False
     app.json.sort_keys = False
@@ -31,8 +31,18 @@ def crear_app(import_name, nombre_servicio, descripcion, **kwargs):
         tags: [Salud]
         responses:
           200:
-            description: El servicio está activo
+            description: El servicio está activo (incluye el estado de la base de datos si la usa)
         """
-        return jsonify({"servicio": nombre_servicio, "estado": "activo"})
+        datos = {"servicio": nombre_servicio, "estado": "activo"}
+        if usa_bd:
+            from sqlalchemy import text
+            from common.db import engine
+            try:
+                with engine.connect() as con:
+                    con.execute(text("SELECT 1"))
+                datos["base_datos"] = "activa"
+            except Exception:
+                datos["base_datos"] = "caída"
+        return jsonify(datos)
 
     return app

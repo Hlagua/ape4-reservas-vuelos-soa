@@ -1,6 +1,7 @@
 """Formato uniforme de errores JSON para todos los servicios."""
 from flask import jsonify
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import DisconnectionError, InterfaceError, OperationalError, SQLAlchemyError
+from sqlalchemy.exc import TimeoutError as TiempoAgotadoPool
 from werkzeug.exceptions import HTTPException
 
 
@@ -35,6 +36,10 @@ def registrar_manejadores(app):
         if getattr(getattr(e, "orig", None), "sqlstate", None) in ("40P01", "40001"):
             # PostgreSQL abortó la transacción por interbloqueo (deadlock) o conflicto de serialización
             return respuesta_error("Conflicto de concurrencia, intente de nuevo", 409)
+        if isinstance(e, (OperationalError, InterfaceError, DisconnectionError, TiempoAgotadoPool)):
+            # No hay conexión con PostgreSQL (Supabase caído, red, límite de conexiones...)
+            app.logger.error("Base de datos no disponible: %s", str(getattr(e, "orig", e)).splitlines()[0])
+            return respuesta_error("Base de datos no disponible", 503, "Intente de nuevo en unos momentos")
         app.logger.exception("Error de base de datos")
         return respuesta_error("Error de base de datos", 500, str(e.__class__.__name__))
 

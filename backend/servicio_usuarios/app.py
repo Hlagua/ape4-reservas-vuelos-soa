@@ -14,7 +14,7 @@ from common.db import engine
 from common.errores import ErrorApi, leer_json
 from common.validaciones import validar_email, validar_nombre, validar_password
 
-app = crear_app(__name__, "Usuarios", "Registro y consulta de usuarios del sistema de reservas")
+app = crear_app(__name__, "Usuarios", "Registro y consulta de usuarios del sistema de reservas", usa_bd=True)
 
 
 def cifrar(password):

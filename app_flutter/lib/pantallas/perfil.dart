@@ -45,19 +45,20 @@ class PantallaPerfilState extends State<PantallaPerfil> {
   Future<void> cargar() async {
     if (!widget.sesion.autenticado) return;
     setState(() => _cargando = true);
-    try {
-      // Dos servicios distintos: Usuarios (perfil) y Reservas (resumen)
-      final resultados = await Future.wait([widget.sesion.api.perfil(), widget.sesion.api.listarReservas()]);
-      if (!mounted) return;
-      setState(() {
-        _perfil = resultados[0];
-        _reservas = resultados[1]['reservas'] as List;
-      });
-    } on ApiError catch (e) {
-      if (mounted) avisar(context, e.texto, TipoAviso.error);
-    } finally {
-      if (mounted) setState(() => _cargando = false);
-    }
+    // Dos servicios distintos: Usuarios (perfil) y Reservas (resumen). Se consultan por separado
+    // para que, si uno está caído, igual se muestre lo que entregó el otro.
+    final errores = <String>[];
+    await Future.wait([
+      widget.sesion.api.perfil().then((p) {
+        if (mounted) setState(() => _perfil = p);
+      }).catchError((Object e) => errores.add('Perfil: ${e is ApiError ? e.texto : e}')),
+      widget.sesion.api.listarReservas().then((r) {
+        if (mounted) setState(() => _reservas = r['reservas'] as List);
+      }).catchError((Object e) => errores.add('Reservas: ${e is ApiError ? e.texto : e}')),
+    ]);
+    if (!mounted) return;
+    setState(() => _cargando = false);
+    if (errores.isNotEmpty) avisar(context, errores.join(' · '), TipoAviso.error);
   }
 
   Future<void> _cerrarSesion() async {

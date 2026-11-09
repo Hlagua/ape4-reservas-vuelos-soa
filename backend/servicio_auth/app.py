@@ -19,7 +19,7 @@ from common.db import engine
 from common.errores import ErrorApi, leer_json
 from common.validaciones import EMAIL_MAX, PASSWORD_MAX
 
-app = crear_app(__name__, "Autenticación", "Inicio de sesión, verificación y cierre de sesión con tokens JWT")
+app = crear_app(__name__, "Autenticación", "Inicio de sesión, verificación y cierre de sesión con tokens JWT", usa_bd=True)
 
 
 def huella(token):
@@ -87,7 +87,9 @@ def login():
     if resp.status_code == 401:
         raise ErrorApi("Credenciales inválidas", 401)
     if resp.status_code != 200:
-        raise ErrorApi("No se pudo validar el usuario", 502, resp.json())
+        cuerpo = resp.json()
+        raise ErrorApi(cuerpo.get("error", "No se pudo validar el usuario"), 503 if resp.status_code >= 500 else 502,
+                       cuerpo.get("detalle"))
 
     usuario = resp.json()
     expira = config.ahora() + timedelta(hours=config.JWT_HORAS)
