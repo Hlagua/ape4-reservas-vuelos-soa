@@ -71,9 +71,24 @@ class _PantallaAsientosState extends State<PantallaAsientos> {
     super.initState();
     final edicion = widget.edicion;
     if (edicion != null) {
+      var incompletos = false;
       for (final p in edicion.pasajeros) {
+        final tipo = p['tipo_documento'] as String;
+        // Las reservas hechas con el formato de la guía ({cantidad}) traen pasajeros como consumidor
+        // final (tipo "CF"): se muestran como cédula vacía para que el usuario complete los datos reales
+        final conocido = tipo == 'CEDULA' || tipo == 'PASAPORTE';
+        incompletos = incompletos || !conocido;
         _pasajeros[p['asiento'] as String] = _Pasajero(
-            nombre: p['nombre'] as String, tipo: p['tipo_documento'] as String, documento: p['documento'] as String);
+            nombre: p['nombre'] as String,
+            tipo: conocido ? tipo : 'CEDULA',
+            documento: conocido ? p['documento'] as String : '');
+      }
+      if (incompletos) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            avisar(context, 'Complete los datos de los pasajeros para guardar los cambios', TipoAviso.info);
+          }
+        });
       }
     }
     _cargar();
