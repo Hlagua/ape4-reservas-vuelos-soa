@@ -1,6 +1,8 @@
 """Pruebas del servicio de Reservas e interoperabilidad entre servicios."""
 import requests
+from sqlalchemy import text
 
+from common.db import engine
 from tests.conftest import estado_asiento, pasajero, solo_local
 
 
@@ -101,6 +103,22 @@ def test_cancelar_dos_veces(base, usuario, vuelo_prueba):
     assert requests.delete(f"{base}/api/reservas/{reserva['id']}", headers=h).status_code == 400
     resp = requests.put(f"{base}/api/reservas/{reserva['id']}", headers=h, json={"pasajeros": [pasajero("36A")]})
     assert resp.status_code == 400
+
+
+def test_no_se_modifica_ni_cancela_un_vuelo_que_ya_despego(base, usuario, vuelo_prueba):
+    reserva = reservar(base, usuario, vuelo_prueba, [pasajero("37A")]).json()["reserva"]
+    h = usuario["headers"]
+    with engine.begin() as con:
+        con.execute(text("SELECT id FROM vuelos.vuelos WHERE id = :v FOR UPDATE"), {"v": vuelo_prueba})
+        con.execute(text("""
+            UPDATE vuelos.vuelos SET fecha_salida = LOCALTIMESTAMP - INTERVAL '1 hour',
+                   fecha_llegada = LOCALTIMESTAMP + INTERVAL '3 hours' WHERE id = :v"""), {"v": vuelo_prueba})
+    resp = requests.put(f"{base}/api/reservas/{reserva['id']}", headers=h, json={"pasajeros": [pasajero("37B")]})
+    assert resp.status_code == 400 and "despegó" in resp.json()["error"]
+    resp = requests.delete(f"{base}/api/reservas/{reserva['id']}", headers=h)
+    assert resp.status_code == 400 and "despegó" in resp.json()["error"]
+    detalle = requests.get(f"{base}/api/reservas/{reserva['id']}", headers=h).json()["reserva"]
+    assert detalle["estado"] == "CONFIRMADA" and detalle["asientos"] == ["37A"]
 
 
 @solo_local

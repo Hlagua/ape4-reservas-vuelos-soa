@@ -197,12 +197,18 @@ def crear_reserva():
         return reservar_por_cantidad(usuario, data, vuelo_id)
     pasajeros = leer_pasajeros(data)
 
-    vuelo = obtener_vuelo(vuelo_id)
-    if datetime.fromisoformat(vuelo["fecha_salida"]) <= config.ahora():
-        raise ErrorApi("El vuelo ya despegó, no se puede reservar", 400)
+    vuelo = vuelo_sin_despegar(vuelo_id, "reservar")
     fila, detalle = registrar_reserva(usuario, vuelo, pasajeros)
     return jsonify({"mensaje": "Reserva creada correctamente", "reserva": reserva_a_dict(fila, detalle),
                     "vuelo": vuelo}), 201
+
+
+def vuelo_sin_despegar(vuelo_id, accion):
+    """Consulta el vuelo al servicio de Vuelos y rechaza la operación si ya despegó."""
+    vuelo = obtener_vuelo(vuelo_id)
+    if datetime.fromisoformat(vuelo["fecha_salida"]) <= config.ahora():
+        raise ErrorApi(f"El vuelo ya despegó, no se puede {accion}", 400)
+    return vuelo
 
 
 def registrar_reserva(usuario, vuelo, pasajeros):
@@ -266,9 +272,7 @@ def reservar_por_cantidad(usuario, data, vuelo_id):
     if not isinstance(cantidad, int) or isinstance(cantidad, bool) or not 1 <= cantidad <= MAX_PASAJEROS:
         raise ErrorApi(f"El campo 'cantidad' debe ser un número entero entre 1 y {MAX_PASAJEROS}", 400)
 
-    vuelo = obtener_vuelo(vuelo_id)
-    if datetime.fromisoformat(vuelo["fecha_salida"]) <= config.ahora():
-        raise ErrorApi("El vuelo ya despegó, no se puede reservar", 400)
+    vuelo = vuelo_sin_despegar(vuelo_id, "reservar")
 
     # Si otro usuario toma alguno de los asientos elegidos a la vez, se vuelve a elegir (hasta 3 intentos)
     for intento in range(3):
@@ -360,7 +364,7 @@ def modificar_reserva(reserva_id):
             pasajeros: {type: array, items: {type: object}}
     responses:
       200: {description: Reserva actualizada}
-      400: {description: Datos inválidos o reserva cancelada}
+      400: {description: Datos inválidos, reserva cancelada o vuelo ya despegó}
       401: {description: Token inválido o ausente}
       403: {description: La reserva pertenece a otro usuario}
       404: {description: Reserva no encontrada}
@@ -373,6 +377,7 @@ def modificar_reserva(reserva_id):
         anteriores = {p.asiento: {"clase": p.clase, "precio": float(p.precio)} for p in pasajeros_de(con, reserva_id)}
     if actual.estado != "CONFIRMADA":
         raise ErrorApi("Solo se pueden modificar reservas confirmadas", 400)
+    vuelo_sin_despegar(actual.vuelo_id, "modificar la reserva")
 
     asientos = [p["asiento"] for p in pasajeros]
     nuevos = [a for a in asientos if a not in anteriores]
@@ -413,7 +418,7 @@ def cancelar_reserva(reserva_id):
       - {in: path, name: reserva_id, type: integer, required: true}
     responses:
       200: {description: Reserva cancelada}
-      400: {description: La reserva ya estaba cancelada}
+      400: {description: La reserva ya estaba cancelada o el vuelo ya despegó}
       401: {description: Token inválido o ausente}
       403: {description: La reserva pertenece a otro usuario}
       404: {description: Reserva no encontrada}
@@ -421,6 +426,8 @@ def cancelar_reserva(reserva_id):
     usuario = requerir_token()
     with engine.begin() as con:
         actual = obtener_reserva_propia(con, reserva_id, usuario)
+        if actual.estado == "CONFIRMADA":
+            vuelo_sin_despegar(actual.vuelo_id, "cancelar la reserva")
         fila = con.execute(text(f"""
             UPDATE reservas.reservas
             SET estado = 'CANCELADA', fecha_actualizacion = LOCALTIMESTAMP

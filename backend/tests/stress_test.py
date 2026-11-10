@@ -230,10 +230,14 @@ def test_7_cors_y_swagger_pdf_compliance():
     """Verificación de endpoints Swagger, CORS, y entrega de frontend."""
     print("\n--- Test 7: Cumplimiento de Requisitos del PDF ---")
     
-    # 1. Frontend responde
-    r_front = requests.get(FRONTEND_URL)
-    front_ok = (r_front.status_code == 200 and "Gestión de Reservas" in r_front.text or "html" in r_front.text.lower())
-    
+    # 1. Frontend web (opcional: el cliente oficial es la app Flutter, que no sirve nada en el puerto 8080)
+    try:
+        r_front = requests.get(FRONTEND_URL, timeout=3)
+        front_ok = r_front.status_code == 200 and "html" in r_front.text.lower()
+        detalle_front = f"Status: {r_front.status_code}"
+    except requests.RequestException:
+        front_ok, detalle_front = None, "Omitido: no hay frontend web en el puerto 8080 (el cliente es Flutter)"
+
     # 2. CORS preflight (OPTIONS)
     r_options = requests.options(f"{BASE_GATEWAY}/api/reservas", headers={
         "Origin": "http://localhost:8080",
@@ -244,13 +248,17 @@ def test_7_cors_y_swagger_pdf_compliance():
     
     # 3. Swagger docs disponibles
     swaggers = {}
-    for puerto, nombre in [(5001, "Usuarios"), (5002, "Auth"), (5003, "Vuelos"), (5004, "Reservas")]:
+    for puerto, nombre in [(5001, "Usuarios"), (5002, "Auth"), (5003, "Vuelos"), (5004, "Reservas"),
+                           (5005, "Facturación")]:
         r = requests.get(f"http://127.0.0.1:{puerto}/apidocs/", timeout=3)
         swaggers[nombre] = r.status_code == 200
     
     swagger_ok = all(swaggers.values())
     
-    log_test("Frontend Operativo (HTTP 8080)", front_ok, f"Status: {r_front.status_code}")
+    if front_ok is None:
+        print(f"[OMITIDO] Frontend Operativo (HTTP 8080) - {detalle_front}")
+    else:
+        log_test("Frontend Operativo (HTTP 8080)", front_ok, detalle_front)
     log_test("CORS Preflight en Gateway", cors_ok, f"Status: {r_options.status_code}, Allow-Origin: {r_options.headers.get('Access-Control-Allow-Origin')}")
     log_test("Documentación Swagger de Servicios (SOA Contratos)", swagger_ok, f"Detalle: {swaggers}")
 

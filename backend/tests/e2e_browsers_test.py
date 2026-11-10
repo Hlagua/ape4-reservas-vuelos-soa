@@ -4,7 +4,6 @@ Demuestra:
 2. Concurrencia real: selección de asientos en vivo, bloqueo en amarillo para el otro usuario,
    imposibilidad de doble reserva, liberación en tiempo real y confirmación final.
 """
-import os
 import sys
 import time
 import requests
