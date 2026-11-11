@@ -303,7 +303,7 @@ def listar_reservas():
     parameters:
       - {in: query, name: estado, type: string, enum: [CONFIRMADA, CANCELADA]}
     responses:
-      200: {description: Reservas del usuario}
+      200: {description: "Reservas del usuario; las confirmadas incluyen fecha_salida del vuelo y despegado (true/false)"}
       401: {description: Token inválido o ausente}
     """
     usuario = requerir_token()
@@ -318,8 +318,26 @@ def listar_reservas():
                     FROM reservas.pasajeros p WHERE p.reserva_id = r.id) AS asientos
             FROM reservas.reservas r WHERE {condicion} ORDER BY fecha_reserva DESC
         """), parametros).all()
-    return jsonify({"total": len(filas),
-                    "reservas": [{**reserva_a_dict(f), "asientos": f.asientos or ""} for f in filas]})
+    salidas = salidas_de_vuelos({f.vuelo_id for f in filas if f.estado == "CONFIRMADA"})
+    ahora = config.ahora()
+    reservas = []
+    for f in filas:
+        salida = salidas.get(f.vuelo_id)
+        reservas.append({**reserva_a_dict(f), "asientos": f.asientos or "", "fecha_salida": salida,
+                         "despegado": datetime.fromisoformat(salida) <= ahora if salida else None})
+    return jsonify({"total": len(filas), "reservas": reservas})
+
+
+def salidas_de_vuelos(vuelo_ids):
+    """Fecha de salida de cada vuelo (consulta al servicio de Vuelos). Si Vuelos no responde,
+    el listado igual se entrega sin ese dato: el backend sigue validando al modificar o cancelar."""
+    salidas = {}
+    for vuelo_id in vuelo_ids:
+        try:
+            salidas[vuelo_id] = obtener_vuelo(vuelo_id)["fecha_salida"]
+        except (ErrorApi, ValueError):
+            pass
+    return salidas
 
 
 @app.get("/api/reservas/<int:reserva_id>")

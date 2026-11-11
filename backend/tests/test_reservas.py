@@ -108,6 +108,9 @@ def test_cancelar_dos_veces(base, usuario, vuelo_prueba):
 def test_no_se_modifica_ni_cancela_un_vuelo_que_ya_despego(base, usuario, vuelo_prueba):
     reserva = reservar(base, usuario, vuelo_prueba, [pasajero("37A")]).json()["reserva"]
     h = usuario["headers"]
+    en_lista = lambda: next(r for r in requests.get(f"{base}/api/reservas", headers=h).json()["reservas"]
+                            if r["id"] == reserva["id"])
+    assert en_lista()["despegado"] is False and en_lista()["fecha_salida"]
     with engine.begin() as con:
         con.execute(text("SELECT id FROM vuelos.vuelos WHERE id = :v FOR UPDATE"), {"v": vuelo_prueba})
         con.execute(text("""
@@ -119,6 +122,7 @@ def test_no_se_modifica_ni_cancela_un_vuelo_que_ya_despego(base, usuario, vuelo_
     assert resp.status_code == 400 and "despegó" in resp.json()["error"]
     detalle = requests.get(f"{base}/api/reservas/{reserva['id']}", headers=h).json()["reserva"]
     assert detalle["estado"] == "CONFIRMADA" and detalle["asientos"] == ["37A"]
+    assert en_lista()["despegado"] is True  # la app oculta Modificar y Cancelar
 
 
 @solo_local

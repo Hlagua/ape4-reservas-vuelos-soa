@@ -177,7 +177,14 @@ class PantallaReservasState extends State<PantallaReservas> {
                   ]),
                   const SizedBox(height: 4),
                   Text('Asientos: ${r['asientos']} · Total ${dinero(r['total'] as num)}\n'
-                      'Fecha: ${fechaHora(r['fecha_reserva'] as String)}'),
+                      'Fecha: ${fechaHora(r['fecha_reserva'] as String)}'
+                      '${r['fecha_salida'] != null ? '\nSalida del vuelo: ${fechaHora(r['fecha_salida'] as String)}' : ''}'),
+                  if (r['estado'] == 'CONFIRMADA' && r['despegado'] == true)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text('El vuelo ya despegó: la reserva no se puede modificar ni cancelar',
+                          style: TextStyle(color: Theme.of(context).colorScheme.outline, fontStyle: FontStyle.italic)),
+                    ),
                   const SizedBox(height: 8),
                   Wrap(spacing: 8, runSpacing: 6, children: [
                     OutlinedButton(onPressed: () => _verDetalle(r['id'] as int), child: const Text('Detalle')),
@@ -188,12 +195,14 @@ class PantallaReservasState extends State<PantallaReservas> {
                         icon: const Icon(Icons.receipt_long),
                         label: const Text('Factura XML'),
                       ),
-                      FilledButton(onPressed: () => _modificar(r['id'] as int), child: const Text('Modificar')),
-                      FilledButton(
-                        style: FilledButton.styleFrom(backgroundColor: const Color(0xFFDC4040)),
-                        onPressed: () => _cancelar(r as Map<String, dynamic>),
-                        child: const Text('Cancelar'),
-                      ),
+                      if (r['despegado'] != true) ...[
+                        FilledButton(onPressed: () => _modificar(r['id'] as int), child: const Text('Modificar')),
+                        FilledButton(
+                          style: FilledButton.styleFrom(backgroundColor: const Color(0xFFDC4040)),
+                          onPressed: () => _cancelar(r as Map<String, dynamic>),
+                          child: const Text('Cancelar'),
+                        ),
+                      ],
                     ],
                   ]),
                 ]),
