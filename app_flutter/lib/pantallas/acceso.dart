@@ -5,6 +5,7 @@ import '../servicios/api.dart';
 import '../servicios/sesion.dart';
 import '../utils/comunes.dart';
 import '../utils/validaciones.dart';
+import 'estado.dart' show cambiarBackend;
 
 /// Devuelve true al hacer Navigator.pop si el usuario inició sesión.
 class PantallaAcceso extends StatefulWidget {
@@ -64,10 +65,35 @@ class _PantallaAccesoState extends State<PantallaAcceso> {
     }
   }
 
+  Future<void> _ingresarAdmin() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => ModalAdministrador(sesion: widget.sesion),
+    );
+    if (ok == true && mounted) {
+      avisar(context, 'Ingresó como administrador');
+      Navigator.pop(context, true);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Iniciar sesión')),
+      appBar: AppBar(
+        title: const Text('Iniciar sesión'),
+        actions: [
+          IconButton(
+            tooltip: 'Dirección del backend',
+            icon: const Icon(Icons.settings_ethernet),
+            onPressed: () async {
+              if (await cambiarBackend(context, widget.sesion) && context.mounted) {
+                avisar(context, 'Backend: ${widget.sesion.api.baseUrl}', TipoAviso.info);
+              }
+            },
+          ),
+        ],
+      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Centrado(
@@ -90,7 +116,11 @@ class _PantallaAccesoState extends State<PantallaAcceso> {
                       autocorrect: false,
                       maxLength: maxEmail,
                       inputFormatters: [Filtro.formateador(Filtro.email)],
-                      decoration: const InputDecoration(labelText: 'Email', hintText: 'nombre@uta.edu.ec', counterText: ''),
+                      decoration: const InputDecoration(
+                        labelText: 'Email',
+                        hintText: 'nombre@uta.edu.ec',
+                        counterText: '',
+                      ),
                       validator: Validar.email,
                     ),
                     const SizedBox(height: 12),
@@ -99,7 +129,11 @@ class _PantallaAccesoState extends State<PantallaAcceso> {
                       obscureText: !_verClave,
                       maxLength: maxPassword,
                       inputFormatters: [Filtro.formateador(Filtro.password)],
-                      decoration: InputDecoration(labelText: 'Contraseña', counterText: '', errorText: _errorCredenciales),
+                      decoration: InputDecoration(
+                        labelText: 'Contraseña',
+                        counterText: '',
+                        errorText: _errorCredenciales,
+                      ),
                       validator: (v) => (v ?? '').isEmpty ? 'La contraseña es obligatoria' : null,
                       onFieldSubmitted: (_) => _ingresar(),
                     ),
@@ -117,13 +151,21 @@ class _PantallaAccesoState extends State<PantallaAcceso> {
                       child: Text(_enviando ? 'Procesando...' : 'Ingresar'),
                     ),
                     const SizedBox(height: 16),
-                    const Row(children: [
-                      Expanded(child: Divider()),
-                      Padding(padding: EdgeInsets.symmetric(horizontal: 10), child: Text('¿No tiene una cuenta?')),
-                      Expanded(child: Divider()),
-                    ]),
+                    const Row(
+                      children: [
+                        Expanded(child: Divider()),
+                        Padding(padding: EdgeInsets.symmetric(horizontal: 10), child: Text('¿No tiene una cuenta?')),
+                        Expanded(child: Divider()),
+                      ],
+                    ),
                     const SizedBox(height: 12),
                     OutlinedButton(onPressed: _enviando ? null : _crearCuenta, child: const Text('Crear cuenta')),
+                    const SizedBox(height: 8),
+                    TextButton.icon(
+                      onPressed: _enviando ? null : _ingresarAdmin,
+                      icon: const Icon(Icons.admin_panel_settings, size: 18),
+                      label: const Text('Ingresar como administrador'),
+                    ),
                   ],
                 ),
               ),
@@ -131,6 +173,91 @@ class _PantallaAccesoState extends State<PantallaAcceso> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Modal de ingreso del administrador con la clave ADMIN_KEY del backend; devuelve true si la clave es válida.
+class ModalAdministrador extends StatefulWidget {
+  const ModalAdministrador({super.key, required this.sesion});
+
+  final Sesion sesion;
+
+  @override
+  State<ModalAdministrador> createState() => _ModalAdministradorState();
+}
+
+class _ModalAdministradorState extends State<ModalAdministrador> {
+  final _clave = TextEditingController();
+  bool _verClave = false;
+  bool _enviando = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _clave.dispose();
+    super.dispose();
+  }
+
+  Future<void> _ingresar() async {
+    if (_clave.text.isEmpty) {
+      setState(() => _error = 'Ingrese la clave de administración');
+      return;
+    }
+    setState(() {
+      _enviando = true;
+      _error = null;
+    });
+    try {
+      await widget.sesion.iniciarAdmin(_clave.text);
+      if (mounted) Navigator.pop(context, true);
+    } on ApiError catch (e) {
+      if (mounted) setState(() => _error = e.status == 403 ? 'Clave de administración incorrecta' : e.texto);
+    } finally {
+      if (mounted) setState(() => _enviando = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Ingreso del administrador'),
+      content: SizedBox(
+        width: 400,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'Permite ver el estado del sistema y apagar o encender servicios '
+              'para probar la tolerancia a fallos.',
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _clave,
+              autofocus: true,
+              obscureText: !_verClave,
+              autocorrect: false,
+              enableSuggestions: false,
+              decoration: InputDecoration(
+                labelText: 'Clave de administración (ADMIN_KEY)',
+                errorText: _error,
+                errorMaxLines: 3,
+                suffixIcon: IconButton(
+                  tooltip: _verClave ? 'Ocultar' : 'Mostrar',
+                  icon: Icon(_verClave ? Icons.visibility_off : Icons.visibility),
+                  onPressed: () => setState(() => _verClave = !_verClave),
+                ),
+              ),
+              onSubmitted: (_) => _enviando ? null : _ingresar(),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: _enviando ? null : () => Navigator.pop(context, false), child: const Text('Cancelar')),
+        FilledButton(onPressed: _enviando ? null : _ingresar, child: Text(_enviando ? 'Verificando...' : 'Ingresar')),
+      ],
     );
   }
 }

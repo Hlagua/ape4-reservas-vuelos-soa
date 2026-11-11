@@ -7,8 +7,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'api.dart';
 
 /// Backend desplegado en Render; para uno local: flutter run --dart-define=API_URL=http://127.0.0.1:5000
-const String apiPorDefecto =
-    String.fromEnvironment('API_URL', defaultValue: 'https://aeroreservas-backend.onrender.com');
+const String apiPorDefecto = String.fromEnvironment(
+  'API_URL',
+  defaultValue: 'https://aeroreservas-backend.onrender.com',
+);
 
 class Sesion extends ChangeNotifier {
   Sesion._(this.api, this._prefs);
@@ -17,7 +19,17 @@ class Sesion extends ChangeNotifier {
   final SharedPreferences _prefs;
   Map<String, dynamic>? usuario;
 
+  /// Clave ADMIN_KEY del administrador: solo se guarda en memoria, nunca en el dispositivo.
+  String? claveAdmin;
+
+  /// Cliente con cuenta (token JWT).
   bool get autenticado => api.token != null;
+
+  /// Administrador: ingresó con la clave ADMIN_KEY del backend (no es un rol de la base de datos).
+  bool get esAdmin => claveAdmin != null;
+
+  /// Hay alguien dentro de la aplicación (cliente o administrador).
+  bool get conSesion => autenticado || esAdmin;
 
   /// Se activa cuando el backend rechaza el token (sesión expirada).
   bool sesionExpirada = false;
@@ -42,6 +54,14 @@ class Sesion extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Ingreso del administrador: el Gateway valida la clave consultando el estado de los servicios.
+  Future<void> iniciarAdmin(String clave) async {
+    if (autenticado) await cerrar();
+    await api.adminServicios(clave);
+    claveAdmin = clave;
+    notifyListeners();
+  }
+
   /// Cierra la sesión: revoca el token en el servidor y lo borra del dispositivo.
   Future<void> cerrar() async {
     if (api.token != null && !sesionExpirada) {
@@ -53,6 +73,7 @@ class Sesion extends ChangeNotifier {
     }
     api.token = null;
     usuario = null;
+    claveAdmin = null;
     await _prefs.remove('token');
     await _prefs.remove('usuario');
     notifyListeners();

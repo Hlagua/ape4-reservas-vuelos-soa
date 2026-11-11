@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'pantallas/acceso.dart';
+import 'pantallas/administracion.dart';
 import 'pantallas/estado.dart';
 import 'pantallas/perfil.dart';
 import 'pantallas/reservas.dart';
@@ -51,15 +52,9 @@ class Inicio extends StatefulWidget {
 class _InicioState extends State<Inicio> {
   int _indice = 0;
   final _reservas = GlobalKey<PantallaReservasState>();
-  final _estado = GlobalKey<PantallaEstadoState>();
   final _perfil = GlobalKey<PantallaPerfilState>();
-
-  static const _destinos = [
-    (Icons.flight, 'Buscar vuelos'),
-    (Icons.confirmation_number, 'Mis reservas'),
-    (Icons.person, 'Perfil'),
-    (Icons.monitor_heart, 'Estado'),
-  ];
+  final _estado = GlobalKey<PantallaEstadoState>();
+  final _admin = GlobalKey<PantallaAdministracionState>();
 
   @override
   void initState() {
@@ -75,37 +70,74 @@ class _InicioState extends State<Inicio> {
 
   void _alCambiarSesion() {
     if (!mounted) return;
-    setState(() {});
+    setState(() => _indice = 0); // las pestañas cambian según quién ingresó
     if (widget.sesion.sesionExpirada) {
       widget.sesion.sesionExpirada = false;
       avisar(context, 'La sesión expiró, vuelva a ingresar', TipoAviso.error);
     }
   }
 
-  void _cambiarVista(int i) {
-    setState(() => _indice = i);
-    if (i == 1) _reservas.currentState?.cargar();
-    if (i == 2) _perfil.currentState?.cargar();
-    if (i == 3) _estado.currentState?.cargar();
+  /// Pestañas visibles: sin sesión solo la búsqueda de vuelos; el cliente ve sus reservas y su perfil;
+  /// el administrador (ingresó con ADMIN_KEY) ve el estado del sistema y el control de servicios.
+  List<_Vista> _vistas() {
+    final sesion = widget.sesion;
+    return [
+      _Vista(Icons.flight, 'Buscar vuelos', PantallaVuelos(sesion: sesion)),
+      if (sesion.autenticado) ...[
+        _Vista(
+          Icons.confirmation_number,
+          'Mis reservas',
+          PantallaReservas(key: _reservas, sesion: sesion),
+          () => _reservas.currentState?.cargar(),
+        ),
+        _Vista(
+          Icons.person,
+          'Perfil',
+          PantallaPerfil(key: _perfil, sesion: sesion),
+          () => _perfil.currentState?.cargar(),
+        ),
+      ],
+      if (sesion.esAdmin) ...[
+        _Vista(
+          Icons.monitor_heart,
+          'Estado',
+          PantallaEstado(key: _estado, sesion: sesion),
+          () => _estado.currentState?.cargar(),
+        ),
+        _Vista(
+          Icons.admin_panel_settings,
+          'Servicios',
+          PantallaAdministracion(key: _admin, sesion: sesion),
+          () => _admin.currentState?.cargar(),
+        ),
+      ],
+    ];
   }
 
   @override
   Widget build(BuildContext context) {
     final sesion = widget.sesion;
     final ancho = MediaQuery.sizeOf(context).width >= 760;
-    final vistas = IndexedStack(index: _indice, children: [
-      PantallaVuelos(sesion: sesion),
-      PantallaReservas(key: _reservas, sesion: sesion),
-      PantallaPerfil(key: _perfil, sesion: sesion),
-      PantallaEstado(key: _estado, sesion: sesion),
-    ]);
+    final vistas = _vistas();
+    final indice = _indice < vistas.length ? _indice : 0;
+    void cambiarVista(int i) {
+      setState(() => _indice = i);
+      vistas[i].alMostrar?.call();
+    }
+
+    final contenido = IndexedStack(index: indice, children: [for (final v in vistas) v.pantalla]);
+    // Con una sola pestaña (sin sesión) no se muestra la barra de navegación
+    final conNavegacion = vistas.length > 1;
 
     return Scaffold(
       appBar: AppBar(
         title: const Row(children: [Icon(Icons.flight), SizedBox(width: 8), Text('AeroReservas')]),
         actions: [
-          if (sesion.autenticado) ...[
-            if (ancho) Center(child: Text('Hola, ${sesion.usuario?['nombre'] ?? ''}')),
+          if (sesion.conSesion) ...[
+            if (sesion.esAdmin)
+              const Chip(avatar: Icon(Icons.admin_panel_settings, size: 18), label: Text('Administrador'))
+            else if (ancho)
+              Center(child: Text('Hola, ${sesion.usuario?['nombre'] ?? ''}')),
             TextButton(onPressed: sesion.cerrar, child: const Text('Cerrar sesión')),
           ] else
             TextButton(
@@ -116,30 +148,38 @@ class _InicioState extends State<Inicio> {
           const SizedBox(width: 8),
         ],
       ),
-      body: ancho
-          ? Row(children: [
-              NavigationRail(
-                selectedIndex: _indice,
-                onDestinationSelected: _cambiarVista,
-                labelType: NavigationRailLabelType.all,
-                destinations: [
-                  for (final (icono, texto) in _destinos)
-                    NavigationRailDestination(icon: Icon(icono), label: Text(texto)),
-                ],
-              ),
-              const VerticalDivider(width: 1),
-              Expanded(child: vistas),
-            ])
-          : vistas,
-      bottomNavigationBar: ancho
+      body: ancho && conNavegacion
+          ? Row(
+              children: [
+                NavigationRail(
+                  selectedIndex: indice,
+                  onDestinationSelected: cambiarVista,
+                  labelType: NavigationRailLabelType.all,
+                  destinations: [
+                    for (final v in vistas) NavigationRailDestination(icon: Icon(v.icono), label: Text(v.texto)),
+                  ],
+                ),
+                const VerticalDivider(width: 1),
+                Expanded(child: contenido),
+              ],
+            )
+          : contenido,
+      bottomNavigationBar: ancho || !conNavegacion
           ? null
           : NavigationBar(
-              selectedIndex: _indice,
-              onDestinationSelected: _cambiarVista,
-              destinations: [
-                for (final (icono, texto) in _destinos) NavigationDestination(icon: Icon(icono), label: texto),
-              ],
+              selectedIndex: indice,
+              onDestinationSelected: cambiarVista,
+              destinations: [for (final v in vistas) NavigationDestination(icon: Icon(v.icono), label: v.texto)],
             ),
     );
   }
+}
+
+class _Vista {
+  const _Vista(this.icono, this.texto, this.pantalla, [this.alMostrar]);
+
+  final IconData icono;
+  final String texto;
+  final Widget pantalla;
+  final VoidCallback? alMostrar;
 }

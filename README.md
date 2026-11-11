@@ -185,7 +185,7 @@ flutter pub get
 flutter run --dart-define=API_URL=https://aeroreservas-backend.onrender.com
 ```
 
-- La dirección del backend también se puede cambiar dentro de la app, en **Estado > Cambiar dirección**.
+- La dirección del backend también se puede cambiar dentro de la app, con el ícono de red en la pantalla **Iniciar sesión** (o en **Estado** si ingresó como administrador).
 - Use `-d windows`, `-d chrome` o un teléfono Android. Windows requiere el *Modo de desarrollador*.
 
 ### Demostración de la concurrencia
@@ -213,9 +213,17 @@ python servicio.py detener vuelos --url https://aeroreservas-backend.onrender.co
 python servicio.py iniciar vuelos --url https://aeroreservas-backend.onrender.com
 ```
 
-Mientras un servicio está apagado, `GET /api/salud` lo muestra como `caído`, y la pantalla **Estado** de la app también.
+Mientras un servicio está apagado, `GET /api/salud` lo muestra como `caído`, y la pantalla **Estado** de la app (solo para el administrador) también.
 
-También se puede hacer **desde la app**: en **Estado**, el botón de administración abre la pantalla *Administración de servicios*. Ahí se ingresa la clave `ADMIN_KEY` y cada servicio tiene un interruptor para apagarlo o encenderlo.
+También se puede hacer **desde la app**: en **Iniciar sesión > Ingresar como administrador** se escribe la clave `ADMIN_KEY`. No es un rol guardado en la base de datos: el Gateway valida la clave y la app solo la mantiene en memoria mientras dura la sesión. El administrador ve las pestañas **Estado** y **Servicios**; en Servicios cada servicio tiene un interruptor para apagarlo o encenderlo.
+
+Pestañas visibles según quién ingresó:
+
+| Sesión | Pestañas |
+|---|---|
+| Sin sesión | Buscar vuelos |
+| Cliente (email y contraseña) | Buscar vuelos, Mis reservas, Perfil |
+| Administrador (`ADMIN_KEY`) | Buscar vuelos, Estado, Servicios |
 
 ### Caída de la base de datos
 
