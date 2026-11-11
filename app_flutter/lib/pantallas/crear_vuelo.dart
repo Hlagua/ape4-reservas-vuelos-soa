@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 
 import '../servicios/api.dart';
 import '../servicios/sesion.dart';
+import '../utils/buscador.dart';
 import '../utils/comunes.dart';
 import '../utils/validaciones.dart';
 import 'asientos.dart';
@@ -240,20 +241,22 @@ class PantallaCrearVueloState extends State<PantallaCrearVuelo> {
     required List<(String, String)> opciones, // (valor, texto)
     required void Function(String?) alCambiar,
     String? Function(String?)? validar,
+    String? excluir,
+    IconData icono = Icons.search,
   }) {
+    // Buscador: al escribir se muestran las 5 opciones más parecidas (no se despliega toda la lista)
     return SizedBox(
       width: 340,
-      child: DropdownButtonFormField<String>(
-        key: ValueKey('$campo-$_version-${opciones.length}'),
-        initialValue: valor,
-        isExpanded: true,
-        decoration: InputDecoration(labelText: etiqueta, errorText: _erroresServidor[campo] as String?),
-        items: [
-          for (final (v, texto) in opciones)
-            DropdownMenuItem(value: v, child: Text(texto, overflow: TextOverflow.ellipsis)),
-        ],
-        validator: (v) => v == null ? 'Elija ${etiqueta.toLowerCase()}' : validar?.call(v),
-        onChanged: (v) => setState(() => alCambiar(v)),
+      child: CampoBuscador(
+        key: ValueKey('$campo-$_version'),
+        etiqueta: etiqueta,
+        icono: icono,
+        opciones: opciones,
+        valor: valor,
+        excluir: excluir,
+        errorText: _erroresServidor[campo] as String?,
+        validar: (v) => v == null ? 'Busque y elija ${etiqueta.toLowerCase()}' : validar?.call(v),
+        alCambiar: (v) => setState(() => alCambiar(v)),
       ),
     );
   }
@@ -292,6 +295,7 @@ class PantallaCrearVueloState extends State<PantallaCrearVuelo> {
                         campo: 'origen',
                         valor: _origen,
                         opciones: ciudades,
+                        icono: Icons.flight_takeoff,
                         alCambiar: (v) {
                           _origen = v;
                           _proponerLlegada();
@@ -301,6 +305,8 @@ class PantallaCrearVueloState extends State<PantallaCrearVuelo> {
                       campo: 'destino',
                       valor: _destino,
                       opciones: ciudades,
+                      icono: Icons.flight_land,
+                      excluir: _origen,
                       alCambiar: (v) {
                         _destino = v;
                         _proponerLlegada();

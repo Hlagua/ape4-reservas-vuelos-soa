@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../servicios/api.dart';
 import '../servicios/sesion.dart';
+import '../utils/buscador.dart';
 import '../utils/comunes.dart';
 import '../utils/validaciones.dart';
 import 'asientos.dart';
@@ -122,19 +123,20 @@ class PantallaVuelosState extends State<PantallaVuelos> {
     if (mounted) _buscar(); // los asientos disponibles pudieron cambiar
   }
 
+  /// Buscador de ciudad: al escribir muestra las 5 más parecidas; vacío = todas.
   Widget _selector(String etiqueta, String? valor, List<String> opciones, ValueChanged<String?> cambio,
       {String? deshabilitada}) {
-    return DropdownButtonFormField<String?>(
-      key: ValueKey('$etiqueta-$valor-$deshabilitada'),
-      initialValue: valor,
-      isExpanded: true,
-      decoration: InputDecoration(labelText: etiqueta),
-      items: [
-        const DropdownMenuItem<String?>(value: null, child: Text('Todos')),
-        for (final o in opciones)
-          DropdownMenuItem<String?>(value: o, enabled: o != deshabilitada, child: Text(o)),
-      ],
-      onChanged: cambio,
+    return CampoBuscador(
+      etiqueta: etiqueta,
+      textoVacio: 'Todos',
+      icono: etiqueta == 'Origen' ? Icons.flight_takeoff : Icons.flight_land,
+      opciones: [for (final o in opciones) (o, o)],
+      valor: valor,
+      excluir: deshabilitada,
+      alCambiar: (v) {
+        cambio(v);
+        _buscar(); // la lista se actualiza al elegir o quitar la ciudad
+      },
     );
   }
 
