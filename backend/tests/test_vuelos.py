@@ -339,6 +339,10 @@ def test_validacion_de_ingreso_de_datos(base, admin):
     assert requests.get(buscar, params={"q": "a" * 31}, headers=h).status_code == 400  # más de 30
     assert requests.get(buscar, params={"q": "Quito", "pais": "Ecuad0r"}, headers=h).status_code == 400
     assert requests.get(buscar, params={"q": "Quito<script>"}, headers=h).status_code == 400
+    simbolos = "'" * 10 + "..(())"
+    assert requests.get(buscar, params={"q": simbolos}, headers=h).status_code == 400  # solo símbolos
+    assert requests.get(buscar, params={"q": "Quito'' .."}, headers=h).status_code == 400  # símbolos seguidos
+    assert requests.get(f"{base}/api/vuelos", params={"origen": simbolos}).status_code == 400
     assert requests.get(f"{base}/api/vuelos", params={"origen": "Quito1"}).status_code == 400
     assert requests.get(f"{base}/api/vuelos", params={"origen": "Quito"}).status_code == 200
     resp = requests.post(f"{base}/api/vuelos/aerolineas", json={"nombre": "Aero<b>", "codigo": "ZZ"}, headers=h)

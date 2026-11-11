@@ -10,4 +10,12 @@ void main() {
   test('Nombre de avión: sin símbolos raros', () => expect(Filtro.nombreAvion(r'Airbus A320$%'), 'Airbus A320'));
   test('Nombre de aerolínea: máximo 40', () => expect(Filtro.nombreAerolinea('x' * 50).length, 40));
   test('URL: sin espacios', () => expect(Filtro.url('http://1.2.3.4 :5000'), 'http://1.2.3.4:5000'));
+  test('Solo símbolos: no se acepta nada', () => expect(Filtro.busqueda("''''''''''..(())"), ''));
+  test('Símbolos seguidos: queda uno', () => expect(Filtro.busqueda("Quito''..--"), "Quito'"));
+  test('Símbolos válidos entre palabras', () {
+    expect(Filtro.busqueda('Saint-Denis'), 'Saint-Denis');
+    expect(Filtro.busqueda("L'Aquila"), "L'Aquila");
+    expect(Filtro.busqueda('St. Louis'), 'St. Louis');
+  });
+  test('Nombre de avión con guion y números', () => expect(Filtro.nombreAvion('--Boeing 737--800'), 'Boeing 737-800'));
 }

@@ -129,7 +129,7 @@ def buscar_vuelos():
     for campo in ("origen", "destino"):
         if request.args.get(campo):
             valor = " ".join(request.args[campo].split())
-            if len(valor) > 60 or not all(c.isalpha() or c in SIMBOLOS_NOMBRE for c in valor):
+            if len(valor) > 60 or not all(c.isalpha() or c in SIMBOLOS_NOMBRE for c in valor) or not bien_formado(valor):
                 raise ErrorApi(f"La ciudad de {campo} solo admite letras (máximo 60 caracteres)", 400)
             condiciones.append(f"{campo} = :{campo}")
             parametros[campo] = valor
@@ -261,6 +261,24 @@ SIMBOLOS_MODELO = SIMBOLOS_NOMBRE + "&/"  # nombres de aerolínea o avión: tamb
 MAX_BUSQUEDA = 30
 
 
+def bien_formado(valor, base=str.isalpha):
+    """Empieza con letra (o número) y cada símbolo va pegado detrás de una letra o número: rechaza
+    textos solo de símbolos, "--Quito" o "Quito..". Los paréntesis se admiten como "Nombre (detalle)"."""
+    if not valor or not base(valor[0]):
+        return False
+    for anterior, c in zip(valor, valor[1:]):
+        if base(c):
+            continue
+        if c == " " and (base(anterior) or anterior in ".)"):
+            continue
+        if c == "(" and anterior == " ":
+            continue
+        if c not in " (" and base(anterior):
+            continue
+        return False
+    return base(valor[-1]) or valor[-1] in ".)"
+
+
 def nombre_catalogo(data, campo, etiqueta, letras_solo=True):
     valor = " ".join(str(data.get(campo) or "").split())
     if not 2 <= len(valor) <= 60:
@@ -269,6 +287,8 @@ def nombre_catalogo(data, campo, etiqueta, letras_solo=True):
         raise ErrorApi("Datos inválidos", 400, {campo: f"{etiqueta} solo admite letras y espacios"})
     if not letras_solo and not all(c.isalnum() or c in SIMBOLOS_MODELO for c in valor):
         raise ErrorApi("Datos inválidos", 400, {campo: f"{etiqueta} solo admite letras, números, espacios y . - & / ( )"})
+    if not bien_formado(valor, str.isalpha if letras_solo else str.isalnum):
+        raise ErrorApi("Datos inválidos", 400, {campo: f"{etiqueta} debe empezar con letra y no tener símbolos seguidos"})
     return valor
 
 
@@ -277,8 +297,8 @@ def texto_de_busqueda(valor, campo, minimo=0):
     texto = " ".join(str(valor or "").split())
     if len(texto) > MAX_BUSQUEDA:
         raise ErrorApi("Datos inválidos", 400, {campo: f"Máximo {MAX_BUSQUEDA} caracteres"})
-    if texto and not all(c.isalpha() or c in SIMBOLOS_NOMBRE for c in texto):
-        raise ErrorApi("Datos inválidos", 400, {campo: "Solo se admiten letras (sin números ni símbolos)"})
+    if texto and (not all(c.isalpha() or c in SIMBOLOS_NOMBRE for c in texto) or not bien_formado(texto)):
+        raise ErrorApi("Datos inválidos", 400, {campo: "Solo se admiten letras (sin números ni símbolos seguidos)"})
     if len(texto) < minimo:
         raise ErrorApi("Escriba al menos 2 letras", 400)
     return texto
