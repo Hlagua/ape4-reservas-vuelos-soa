@@ -1,6 +1,7 @@
 // Mapa de asientos: selección con retención temporal y control de concurrencia
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../servicios/api.dart';
@@ -63,6 +64,7 @@ class _PantallaAsientosState extends State<PantallaAsientos> {
   bool _enviando = false;
   Timer? _temporizador;
   Timer? _reloj;
+  Set<String> _original = {}; // datos de la reserva al abrir la edición, para detectar cambios
 
   Api get _api => widget.sesion.api;
 
@@ -83,6 +85,7 @@ class _PantallaAsientosState extends State<PantallaAsientos> {
             tipo: conocido ? tipo : 'CEDULA',
             documento: conocido ? p['documento'] as String : '');
       }
+      _original = _huella(_pasajeros.keys);
       if (incompletos) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
@@ -174,6 +177,33 @@ class _PantallaAsientosState extends State<PantallaAsientos> {
   }
 
   List<String> get _seleccion => [..._propios, ..._expiran.keys]..sort(_ordenAsientos);
+
+  /// Asientos y datos de pasajeros en un formato comparable.
+  Set<String> _huella(Iterable<String> asientos) => {
+        for (final a in asientos)
+          '$a|${formatearNombre(_pasajeros[a]!.nombre.text)}|${_pasajeros[a]!.tipo}|${_pasajeros[a]!.documento.text}'
+      };
+
+  /// En edición: true si cambió algún asiento o dato de pasajero respecto a la reserva guardada.
+  bool get _hayCambios {
+    if (widget.edicion == null || _datos == null) return false;
+    return !setEquals(_huella(_seleccion), _original);
+  }
+
+  /// Flecha atrás (o botón atrás del sistema) en edición: pide confirmación si hay cambios sin guardar.
+  Future<void> _alSalir(bool salio, Object? resultado) async {
+    if (salio) return;
+    if (_hayCambios) {
+      final ok = await confirmar(context,
+          titulo: 'Salir sin guardar',
+          mensaje: '¿Está seguro de salir sin guardar los cambios realizados en la reserva '
+              '#${widget.edicion!.reservaId}? Se descartarán y la reserva quedará como estaba.',
+          textoOk: 'Sí, salir');
+      if (!ok || !mounted) return;
+      avisar(context, 'Cambios descartados, la reserva no se modificó', TipoAviso.info);
+    }
+    if (mounted) Navigator.pop(context); // dispose libera los asientos nuevos retenidos
+  }
 
   int _ordenAsientos(String a, String b) {
     int fila(String s) => int.parse(s.substring(0, s.length - 1));
@@ -343,7 +373,11 @@ class _PantallaAsientosState extends State<PantallaAsientos> {
   @override
   Widget build(BuildContext context) {
     final datos = _datos;
-    return Scaffold(
+    // En edición la salida pasa por _alSalir; Navigator.pop (guardar o Cancelar) no se bloquea
+    return PopScope(
+      canPop: widget.edicion == null,
+      onPopInvokedWithResult: _alSalir,
+      child: Scaffold(
       appBar: AppBar(
           title: Text(widget.edicion != null ? 'Modificar reserva #${widget.edicion!.reservaId}' : 'Elegir asientos')),
       body: datos == null
@@ -365,6 +399,7 @@ class _PantallaAsientosState extends State<PantallaAsientos> {
                 ]),
               );
             }),
+      ),
     );
   }
 
@@ -474,14 +509,16 @@ class _PantallaAsientosState extends State<PantallaAsientos> {
           ),
           const SizedBox(height: 8),
           Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            SizedBox(
-              width: 125,
+            // Con Expanded e isExpanded el selector se adapta al ancho (no se desborda en pantallas angostas)
+            Expanded(
+              flex: 4,
               child: DropdownButtonFormField<String>(
                 initialValue: p.tipo,
+                isExpanded: true,
                 decoration: const InputDecoration(labelText: 'Tipo'),
                 items: const [
-                  DropdownMenuItem(value: 'CEDULA', child: Text('Cédula')),
-                  DropdownMenuItem(value: 'PASAPORTE', child: Text('Pasaporte')),
+                  DropdownMenuItem(value: 'CEDULA', child: Text('Cédula', overflow: TextOverflow.ellipsis)),
+                  DropdownMenuItem(value: 'PASAPORTE', child: Text('Pasaporte', overflow: TextOverflow.ellipsis)),
                 ],
                 onChanged: (v) => setState(() {
                   p.tipo = v!;
@@ -491,6 +528,7 @@ class _PantallaAsientosState extends State<PantallaAsientos> {
             ),
             const SizedBox(width: 8),
             Expanded(
+              flex: 5,
               child: TextFormField(
                 key: ValueKey('doc-$asiento-${p.tipo}'),
                 controller: p.documento,
