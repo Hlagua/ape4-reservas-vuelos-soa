@@ -1,4 +1,6 @@
 // Catálogos del administrador: crear ciudades (origen y destino), aerolíneas y tipos de avión.
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -142,13 +144,61 @@ class _TarjetaCiudadState extends State<_TarjetaCiudad> {
   final _longitud = TextEditingController();
   bool _enviando = false;
   Map<String, String> _errores = {};
+  Timer? _espera;
+  int _consulta = 0; // descarta respuestas de búsquedas anteriores
+  bool _buscando = false;
+  bool _automaticas = false; // las coordenadas actuales las puso la búsqueda (no el usuario)
+  String? _lugar;
 
   @override
   void dispose() {
+    _espera?.cancel();
     _nombre.dispose();
     _latitud.dispose();
     _longitud.dispose();
     super.dispose();
+  }
+
+  /// Al escribir el nombre se buscan las coordenadas solas (cuando deja de escribir).
+  void _alEscribirNombre(String texto) {
+    _espera?.cancel();
+    final nombre = texto.trim();
+    if (nombre.length < 3) {
+      setState(() {
+        _lugar = null;
+        _buscando = false;
+      });
+      return;
+    }
+    setState(() => _buscando = true);
+    _espera = Timer(const Duration(milliseconds: 900), () => _buscarCoordenadas(nombre));
+  }
+
+  Future<void> _buscarCoordenadas(String nombre) async {
+    final consulta = ++_consulta;
+    try {
+      final r = await widget.api.coordenadasCiudad(nombre);
+      if (!mounted || consulta != _consulta) return;
+      setState(() {
+        _latitud.text = '${r['latitud']}';
+        _longitud.text = '${r['longitud']}';
+        _automaticas = true;
+        _lugar = 'Ubicación encontrada: ${r['lugar']}';
+      });
+    } on ApiError catch (e) {
+      if (!mounted || consulta != _consulta) return;
+      setState(() {
+        if (_automaticas) {
+          _latitud.clear();
+          _longitud.clear();
+        }
+        _lugar = e.status == 404
+            ? 'No se encontró la ubicación; puede escribir la latitud y longitud'
+            : 'No se pudo consultar el mapa (${e.texto}); puede escribirlas a mano';
+      });
+    } finally {
+      if (mounted && consulta == _consulta) setState(() => _buscando = false);
+    }
   }
 
   String? _validarCoordenada(String? v, double limite, String nombre) {
@@ -175,6 +225,10 @@ class _TarjetaCiudadState extends State<_TarjetaCiudad> {
       _nombre.clear();
       _latitud.clear();
       _longitud.clear();
+      setState(() {
+        _lugar = null;
+        _automaticas = false;
+      });
       await widget.alCrear();
     } on ApiError catch (e) {
       if (mounted) setState(() => _errores = _erroresDe(context, e));
@@ -199,7 +253,18 @@ class _TarjetaCiudadState extends State<_TarjetaCiudad> {
               maxLength: 60,
               textCapitalization: TextCapitalization.words,
               inputFormatters: [Filtro.formateador(Filtro.nombre)],
-              decoration: InputDecoration(labelText: 'Nombre de la ciudad', counterText: '', errorText: _errores['nombre']),
+              decoration: InputDecoration(
+                labelText: 'Nombre de la ciudad',
+                counterText: '',
+                errorText: _errores['nombre'],
+                suffixIcon: _buscando
+                    ? const Padding(
+                        padding: EdgeInsets.all(12),
+                        child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                      )
+                    : null,
+              ),
+              onChanged: _alEscribirNombre,
               validator: (v) => (v ?? '').trim().length < 2 ? 'Escriba el nombre de la ciudad' : null,
             ),
           ),
@@ -209,8 +274,8 @@ class _TarjetaCiudadState extends State<_TarjetaCiudad> {
               controller: _latitud,
               keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
               inputFormatters: [coordenada],
-              decoration: InputDecoration(
-                  labelText: 'Latitud (opcional)', hintText: '-0.18065', errorText: _errores['latitud']),
+              decoration: InputDecoration(labelText: 'Latitud', hintText: '-0.18065', errorText: _errores['latitud']),
+              onChanged: (_) => _automaticas = false,
               validator: (v) => _validarCoordenada(v, 90, 'latitud'),
             ),
           ),
@@ -220,8 +285,8 @@ class _TarjetaCiudadState extends State<_TarjetaCiudad> {
               controller: _longitud,
               keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
               inputFormatters: [coordenada],
-              decoration: InputDecoration(
-                  labelText: 'Longitud (opcional)', hintText: '-78.46784', errorText: _errores['longitud']),
+              decoration: InputDecoration(labelText: 'Longitud', hintText: '-78.46784', errorText: _errores['longitud']),
+              onChanged: (_) => _automaticas = false,
               validator: (v) => _validarCoordenada(v, 180, 'longitud'),
             ),
           ),
@@ -230,6 +295,15 @@ class _TarjetaCiudadState extends State<_TarjetaCiudad> {
             icon: const Icon(Icons.add),
             label: Text(_enviando ? 'Creando...' : 'Crear ciudad'),
           ),
+          if (_lugar != null)
+            SizedBox(
+              width: double.infinity,
+              child: Row(children: [
+                Icon(_lugar!.startsWith('Ubicación') ? Icons.place : Icons.info_outline, size: 16),
+                const SizedBox(width: 6),
+                Expanded(child: Text(_lugar!, style: Theme.of(context).textTheme.bodySmall)),
+              ]),
+            ),
         ]),
       ),
       lista: Wrap(spacing: 8, runSpacing: 8, children: [

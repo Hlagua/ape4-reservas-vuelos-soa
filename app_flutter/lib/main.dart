@@ -51,6 +51,7 @@ class Inicio extends StatefulWidget {
 
 class _InicioState extends State<Inicio> {
   int _indice = 0;
+  final _buscarVuelos = GlobalKey<PantallaVuelosState>();
   final _reservas = GlobalKey<PantallaReservasState>();
   final _perfil = GlobalKey<PantallaPerfilState>();
   final _crearVuelo = GlobalKey<PantallaCrearVueloState>();
@@ -82,7 +83,12 @@ class _InicioState extends State<Inicio> {
   List<_Vista> _vistas() {
     final sesion = widget.sesion;
     return [
-      _Vista(Icons.flight, 'Buscar vuelos', PantallaVuelos(sesion: sesion)),
+      _Vista(
+        Icons.flight,
+        'Buscar vuelos',
+        PantallaVuelos(key: _buscarVuelos, sesion: sesion),
+        () => _buscarVuelos.currentState?.actualizar(),
+      ),
       if (sesion.esCliente)
         _Vista(
           Icons.confirmation_number,

@@ -1,4 +1,6 @@
 // Búsqueda de vuelos
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../servicios/api.dart';
@@ -13,10 +15,10 @@ class PantallaVuelos extends StatefulWidget {
   final Sesion sesion;
 
   @override
-  State<PantallaVuelos> createState() => _PantallaVuelosState();
+  State<PantallaVuelos> createState() => PantallaVuelosState();
 }
 
-class _PantallaVuelosState extends State<PantallaVuelos> {
+class PantallaVuelosState extends State<PantallaVuelos> {
   List<String> _origenes = [];
   List<String> _destinos = [];
   String? _origen;
@@ -26,14 +28,27 @@ class _PantallaVuelosState extends State<PantallaVuelos> {
   List<dynamic> _vuelos = [];
   String _resumen = '';
   bool _cargando = true;
+  Timer? _refresco;
+
+  /// Cada cuánto se vuelve a consultar la lista (vuelos nuevos y asientos disponibles).
+  static const _intervalo = Duration(seconds: 30);
 
   @override
   void initState() {
     super.initState();
+    widget.sesion.vuelosCambiados.addListener(actualizar);
+    _refresco = Timer.periodic(_intervalo, (_) => actualizar());
     _iniciar();
   }
 
-  Future<void> _iniciar() async {
+  @override
+  void dispose() {
+    widget.sesion.vuelosCambiados.removeListener(actualizar);
+    _refresco?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _cargarCiudades({bool silencioso = false}) async {
     try {
       final c = await widget.sesion.api.ciudades();
       if (!mounted) return;
@@ -42,16 +57,28 @@ class _PantallaVuelosState extends State<PantallaVuelos> {
         _destinos = (c['destinos'] as List).cast<String>();
       });
     } on ApiError catch (e) {
-      if (mounted) avisar(context, e.texto, TipoAviso.error);
+      if (mounted && !silencioso) avisar(context, e.texto, TipoAviso.error);
     }
+  }
+
+  Future<void> _iniciar() async {
+    await _cargarCiudades();
     await _buscar();
+  }
+
+  /// Vuelve a consultar ciudades y vuelos sin borrar la lista ni mostrar errores
+  /// (al crear un vuelo, al volver a la pestaña y cada 30 segundos).
+  Future<void> actualizar() async {
+    if (!mounted || _cargando) return;
+    await _cargarCiudades(silencioso: true);
+    await _buscar(silencioso: true);
   }
 
   String _iso(DateTime d) =>
       '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
-  Future<void> _buscar() async {
-    setState(() => _cargando = true);
+  Future<void> _buscar({bool silencioso = false}) async {
+    if (!silencioso) setState(() => _cargando = true);
     try {
       final r = await widget.sesion.api.buscarVuelos({
         'origen': ?_origen,
@@ -66,12 +93,12 @@ class _PantallaVuelosState extends State<PantallaVuelos> {
         _resumen = '$total vuelo(s) encontrados${total == 100 ? ' (mostrando los primeros 100)' : ''}';
       });
     } on ApiError catch (e) {
-      if (mounted) {
+      if (mounted && !silencioso) {
         setState(() => _resumen = e.texto);
         avisar(context, e.texto, TipoAviso.error);
       }
     } finally {
-      if (mounted) setState(() => _cargando = false);
+      if (mounted && !silencioso) setState(() => _cargando = false);
     }
   }
 

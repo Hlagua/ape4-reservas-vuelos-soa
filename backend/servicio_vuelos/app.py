@@ -9,7 +9,10 @@ Es el único dueño del esquema `vuelos`. Control de concurrencia de asientos:
 """
 import json
 import threading
+import unicodedata
 import uuid
+
+import requests
 from datetime import datetime, timedelta
 
 from flask import jsonify, request
@@ -254,6 +257,71 @@ def insertar_unico(sql, parametros, mensaje_repetido, campo):
         raise ErrorApi(mensaje_repetido, 409, {campo: mensaje_repetido})
 
 
+# Geocodificación con OpenStreetMap (Nominatim): solo se envía el nombre de la ciudad
+NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+NOMINATIM_HEADERS = {"User-Agent": "AeroReservas-SOA/1.0 (proyecto academico)"}
+
+
+def _buscar_lugar(parametros, solo_poblados=True):
+    resp = requests.get(NOMINATIM_URL, headers=NOMINATIM_HEADERS, timeout=8, params={
+        "format": "jsonv2", "limit": 1, "accept-language": "es",
+        **({"featureType": "settlement"} if solo_poblados else {}), **parametros})
+    resultados = resp.json() if resp.ok else []
+    return resultados[0] if resultados else None
+
+
+def _simple(texto):
+    return unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode().casefold().strip()
+
+
+def geocodificar(nombre):
+    """(latitud, longitud, lugar) de una ciudad, o None si no se encuentra o el servicio no responde.
+
+    Se busca en Ecuador y en el mundo: se usa la de Ecuador si se llama exactamente así y es casi tan
+    conocida como la mejor del mundo ("Esmeraldas" → Ecuador; "Panamá" → la capital de Panamá, no un
+    barrio de Quito). Se puede indicar el país para evitar dudas: "Santa Cruz, Galápagos".
+    """
+    try:
+        mundo = _buscar_lugar({"q": nombre}) or _buscar_lugar({"q": nombre}, solo_poblados=False)
+        ecuador = None if "," in nombre else _buscar_lugar({"city": nombre, "countrycodes": "ec"})
+    except (requests.RequestException, ValueError):
+        return None
+    if ecuador:
+        mismo_nombre = _simple(ecuador.get("name") or ecuador.get("display_name", "").split(",")[0]) == _simple(nombre)
+        importancia = float(ecuador.get("importance") or 0)
+        if mismo_nombre and (not mundo or importancia >= 0.7 * float(mundo.get("importance") or 0)):
+            mundo = ecuador
+    if not mundo:
+        return None
+    return round(float(mundo["lat"]), 5), round(float(mundo["lon"]), 5), mundo.get("display_name", nombre)
+
+
+@app.get("/api/vuelos/ciudades/coordenadas")
+def coordenadas_ciudad():
+    """[Administrador] Buscar la latitud y longitud de una ciudad (OpenStreetMap)
+    ---
+    tags: [Catálogos]
+    security: [{Bearer: []}]
+    parameters:
+      - {in: query, name: nombre, type: string, required: true, example: Esmeraldas}
+    responses:
+      200: {description: "Coordenadas encontradas: {latitud, longitud, lugar}"}
+      400: {description: Falta el nombre}
+      403: {description: Solo el administrador}
+      404: {description: No se encontró la ciudad}
+      503: {description: El servicio de mapas no respondió}
+    """
+    requerir_admin()
+    nombre = " ".join(str(request.args.get("nombre") or "").split())
+    if len(nombre) < 2:
+        raise ErrorApi("Escriba el nombre de la ciudad", 400)
+    encontrado = geocodificar(nombre)
+    if encontrado is None:
+        raise ErrorApi(f"No se encontraron las coordenadas de {nombre}", 404)
+    latitud, longitud, lugar = encontrado
+    return jsonify({"nombre": nombre, "latitud": latitud, "longitud": longitud, "lugar": lugar})
+
+
 @app.post("/api/vuelos/ciudades")
 def crear_ciudad():
     """[Administrador] Registrar una ciudad (sirve como origen y como destino)
@@ -269,8 +337,8 @@ def crear_ciudad():
           required: [nombre]
           properties:
             nombre: {type: string, example: Esmeraldas}
-            latitud: {type: number, example: 0.9592, description: "Opcional, para el mapa (-90 a 90)"}
-            longitud: {type: number, example: -79.6539, description: "Opcional, para el mapa (-180 a 180)"}
+            latitud: {type: number, example: 0.9592, description: "Opcional (-90 a 90); si falta se busca sola"}
+            longitud: {type: number, example: -79.6539, description: "Opcional (-180 a 180); si falta se busca sola"}
     responses:
       201: {description: Ciudad creada}
       400: {description: Nombre inválido}
@@ -294,12 +362,17 @@ def crear_ciudad():
             raise ErrorApi("Datos inválidos", 400, {campo: f"La {campo} debe ser un número entre -{limite} y {limite}"})
     if (coordenadas["latitud"] is None) != (coordenadas["longitud"] is None):
         raise ErrorApi("Datos inválidos", 400, {"longitud": "Escriba la latitud y la longitud, o ninguna"})
+    if coordenadas["latitud"] is None:
+        # Sin coordenadas se buscan automáticamente (si el servicio de mapas no responde, quedan vacías)
+        encontrado = geocodificar(nombre)
+        if encontrado:
+            coordenadas["latitud"], coordenadas["longitud"] = encontrado[0], encontrado[1]
     repetido = f"La ciudad {nombre} ya existe"
     if ya_existe("ciudades", nombre):
         raise ErrorApi(repetido, 409, {"nombre": repetido})
     insertar_unico("INSERT INTO vuelos.ciudades (nombre, latitud, longitud) VALUES (:n, :latitud, :longitud)",
                    {"n": nombre, **coordenadas}, repetido, "nombre")
-    return jsonify({"mensaje": f"Ciudad {nombre} creada", "ciudad": nombre}), 201
+    return jsonify({"mensaje": f"Ciudad {nombre} creada", "ciudad": nombre, **coordenadas}), 201
 
 
 @app.post("/api/vuelos/aerolineas")

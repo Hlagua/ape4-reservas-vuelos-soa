@@ -1,6 +1,8 @@
 // Crear vuelos: solo la ve el administrador (usuario con rol ADMIN).
 // Se elige origen, destino, aerolínea y tipo de avión de los catálogos (pestaña Catálogos),
 // la fecha y hora de salida y de llegada, y el precio base (Economy).
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../servicios/api.dart';
@@ -22,6 +24,8 @@ class PantallaCrearVueloState extends State<PantallaCrearVuelo> {
   final _form = GlobalKey<FormState>();
   final _precio = TextEditingController();
   List<String> _ciudades = [];
+  Map<String, dynamic> _coordenadas = {};
+  bool _llegadaManual = false; // el administrador eligió la llegada a mano (no se reemplaza sola)
   List<Map<String, dynamic>> _aerolineas = [];
   List<Map<String, dynamic>> _aviones = [];
   String? _origen, _destino, _aerolinea, _avion;
@@ -53,6 +57,7 @@ class PantallaCrearVueloState extends State<PantallaCrearVuelo> {
       if (!mounted) return;
       setState(() {
         _ciudades = (r['ciudades'] as List).cast<String>();
+        _coordenadas = (r['coordenadas'] as Map?)?.cast<String, dynamic>() ?? {};
         _aerolineas = (r['aerolineas'] as List).cast<Map<String, dynamic>>();
         _aviones = (r['aviones'] as List).cast<Map<String, dynamic>>();
         _errorCarga = null;
@@ -66,6 +71,36 @@ class PantallaCrearVueloState extends State<PantallaCrearVuelo> {
       if (mounted) setState(() => _errorCarga = e.texto);
     }
   }
+
+  /// Distancia en km entre origen y destino (fórmula del haversine), si ambas ciudades tienen coordenadas.
+  double? get _distanciaKm {
+    final a = _coordenadas[_origen] as List?, b = _coordenadas[_destino] as List?;
+    if (a == null || b == null || _origen == _destino) return null;
+    double rad(num g) => g * math.pi / 180;
+    final dLat = rad(b[0] - a[0]), dLon = rad(b[1] - a[1]);
+    final h = math.pow(math.sin(dLat / 2), 2) +
+        math.cos(rad(a[0])) * math.cos(rad(b[0])) * math.pow(math.sin(dLon / 2), 2);
+    return 2 * 6371 * math.asin(math.sqrt(h));
+  }
+
+  /// Duración sugerida: crucero a 800 km/h más 30 minutos de despegue y aterrizaje, redondeada a 5 minutos.
+  Duration? get _duracionSugerida {
+    final km = _distanciaKm;
+    if (km == null) return null;
+    final minutos = (km / 800 * 60 + 30).clamp(25, 20 * 60);
+    return Duration(minutes: (minutos / 5).round() * 5);
+  }
+
+  /// Propone la llegada según la duración sugerida (si el administrador no la eligió a mano).
+  void _proponerLlegada({bool forzar = false}) {
+    final sugerida = _duracionSugerida;
+    if (_salida == null || sugerida == null || (_llegadaManual && !forzar)) return;
+    _llegada = _salida!.add(sugerida);
+    _llegadaManual = false;
+  }
+
+  String _textoDuracion(Duration d) =>
+      '${d.inHours > 0 ? '${d.inHours}h ' : ''}${(d.inMinutes % 60).toString().padLeft(2, '0')}m';
 
   Map<String, dynamic>? get _avionElegido =>
       _avion == null ? null : _aviones.firstWhere((a) => a['avion'] == _avion);
@@ -93,15 +128,26 @@ class PantallaCrearVueloState extends State<PantallaCrearVuelo> {
     final d = await _elegirFechaHora(_salida, DateTime.now().add(const Duration(hours: 1)));
     if (d == null) return;
     setState(() {
+      final anterior = _salida;
       _salida = d;
-      // Se propone una llegada una hora después si aún no hay una válida
-      if (_llegada == null || !_llegada!.isAfter(d)) _llegada = d.add(const Duration(hours: 1));
+      if (_duracionSugerida != null && !_llegadaManual) {
+        _proponerLlegada();
+      } else if (_llegada != null && anterior != null && _llegada!.isAfter(anterior)) {
+        _llegada = d.add(_llegada!.difference(anterior)); // se conserva la duración elegida
+      } else if (_llegada == null || !_llegada!.isAfter(d)) {
+        _llegada = d.add(const Duration(hours: 1));
+      }
     });
   }
 
   Future<void> _elegirLlegada() async {
     final d = await _elegirFechaHora(_llegada, _salida ?? DateTime.now());
-    if (d != null) setState(() => _llegada = d);
+    if (d != null) {
+      setState(() {
+        _llegada = d;
+        _llegadaManual = true;
+      });
+    }
   }
 
   String? _errorFechas() {
@@ -144,6 +190,7 @@ class PantallaCrearVueloState extends State<PantallaCrearVuelo> {
       if (!mounted) return;
       avisar(context, r['mensaje'] as String);
       setState(() => _creado = r['vuelo'] as Map<String, dynamic>);
+      widget.sesion.vuelosCambiados.value++; // la búsqueda de vuelos se actualiza sola
     } on ApiError catch (e) {
       if (!mounted) return;
       avisar(context, e.texto, TipoAviso.error);
@@ -159,11 +206,31 @@ class PantallaCrearVueloState extends State<PantallaCrearVuelo> {
     setState(() {
       _origen = _destino = _aerolinea = _avion = null;
       _salida = _llegada = null;
+      _llegadaManual = false;
       _creado = null;
       _erroresServidor = {};
       _mostrarErrorFechas = false;
       _version++;
     });
+  }
+
+  /// Distancia y duración sugerida entre origen y destino.
+  Widget _sugerencia() {
+    final sugerida = _duracionSugerida!;
+    final actual = _salida != null && _llegada != null ? _llegada!.difference(_salida!) : null;
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Wrap(crossAxisAlignment: WrapCrossAlignment.center, spacing: 8, children: [
+        const Icon(Icons.straighten, size: 18),
+        Text('$_origen – $_destino ≈ ${_distanciaKm!.round()} km · duración sugerida ${_textoDuracion(sugerida)}'
+            '${_salida == null ? ' (elija la salida y la llegada se calcula sola)' : ''}'),
+        if (_salida != null && actual != sugerida)
+          TextButton(
+            onPressed: () => setState(() => _proponerLlegada(forzar: true)),
+            child: const Text('Usar la duración sugerida'),
+          ),
+      ]),
+    );
   }
 
   Widget _selector({
@@ -225,13 +292,19 @@ class PantallaCrearVueloState extends State<PantallaCrearVuelo> {
                         campo: 'origen',
                         valor: _origen,
                         opciones: ciudades,
-                        alCambiar: (v) => _origen = v),
+                        alCambiar: (v) {
+                          _origen = v;
+                          _proponerLlegada();
+                        }),
                     _selector(
                       etiqueta: 'Destino',
                       campo: 'destino',
                       valor: _destino,
                       opciones: ciudades,
-                      alCambiar: (v) => _destino = v,
+                      alCambiar: (v) {
+                        _destino = v;
+                        _proponerLlegada();
+                      },
                       validar: (v) => v == _origen ? 'El destino debe ser distinto del origen' : null,
                     ),
                     _selector(
@@ -269,6 +342,7 @@ class PantallaCrearVueloState extends State<PantallaCrearVuelo> {
                         child: Text('Duración ${duracion(_iso(_salida!), _iso(_llegada!))}'),
                       ),
                   ]),
+                  if (_duracionSugerida != null) _sugerencia(),
                   if (errorFechas != null || errorFechasServidor != null)
                     Padding(
                       padding: const EdgeInsets.only(top: 6),

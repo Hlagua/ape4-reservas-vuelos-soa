@@ -149,6 +149,10 @@ class Api {
   /// Ciudades (con coordenadas), aerolíneas y aviones registrados.
   Future<Map<String, dynamic>> catalogos() => _pedir('GET', '/api/vuelos/catalogos');
 
+  /// Latitud y longitud de una ciudad (el backend las busca en OpenStreetMap).
+  Future<Map<String, dynamic>> coordenadasCiudad(String nombre) =>
+      _pedir('GET', '/api/vuelos/ciudades/coordenadas', query: {'nombre': nombre});
+
   Future<Map<String, dynamic>> crearCiudad(String nombre, {double? latitud, double? longitud}) =>
       _pedir('POST', '/api/vuelos/ciudades', cuerpo: {'nombre': nombre, 'latitud': latitud, 'longitud': longitud});
 

@@ -222,3 +222,14 @@ def test_catalogos_y_vuelos_solo_administrador(base, usuario):
     for ruta, cuerpo in (("ciudades", {"nombre": "Tena"}), ("aerolineas", {"nombre": "X", "codigo": "XX"}),
                          ("aviones", {"nombre": "X", "clases": []})):
         assert requests.post(f"{base}/api/vuelos/{ruta}", json=cuerpo, headers=usuario["headers"]).status_code == 403
+
+
+def test_coordenadas_de_ciudad_solo_administrador(base, usuario, admin):
+    ruta = f"{base}/api/vuelos/ciudades/coordenadas"
+    assert requests.get(ruta, params={"nombre": "Tena"}, headers=usuario["headers"]).status_code == 403
+    assert requests.get(ruta, params={"nombre": "T"}, headers=admin["headers"]).status_code == 400
+    # Con conexión al servicio de mapas devuelve las coordenadas (o 404/503 si no responde)
+    resp = requests.get(ruta, params={"nombre": "Tena"}, headers=admin["headers"])
+    if resp.status_code == 200:
+        datos = resp.json()
+        assert -2 < datos["latitud"] < 0 and -79 < datos["longitud"] < -77  # Tena, Napo (Ecuador)

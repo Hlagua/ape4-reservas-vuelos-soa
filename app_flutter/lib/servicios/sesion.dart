@@ -28,6 +28,9 @@ class Sesion extends ChangeNotifier {
   /// Cliente: puede comprar y gestionar sus reservas.
   bool get esCliente => autenticado && !esAdmin;
 
+  /// Avisa a la búsqueda de vuelos que hay vuelos nuevos (el administrador creó uno).
+  final vuelosCambiados = ValueNotifier<int>(0);
+
   /// Se activa cuando el backend rechaza el token (sesión expirada).
   bool sesionExpirada = false;
 
