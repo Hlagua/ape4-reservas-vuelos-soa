@@ -80,6 +80,7 @@ SCRIPT_TABLAS = [
     """,
     "ALTER TABLE vuelos.ciudades ADD COLUMN IF NOT EXISTS latitud NUMERIC(8,5) NULL",
     "ALTER TABLE vuelos.ciudades ADD COLUMN IF NOT EXISTS longitud NUMERIC(8,5) NULL",
+    "ALTER TABLE vuelos.ciudades ADD COLUMN IF NOT EXISTS pais VARCHAR(60) NULL",
     """
     CREATE TABLE IF NOT EXISTS vuelos.aerolineas (
         id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -184,6 +185,8 @@ DIAS_A_GENERAR = 30
 USUARIO_DEMO = {"nombre": "Usuario Demo", "email": "demo@uta.edu.ec", "password": "demo1234"}
 # Administrador de ejemplo: crea vuelos y catálogos; solo consulta vuelos y asientos (no compra)
 USUARIO_ADMIN = {"nombre": "Administrador", "email": "admin@uta.edu.ec", "password": "admin1234"}
+# País de las ciudades iniciales (el resto es Ecuador)
+PAISES = {"Bogotá": "Colombia", "Lima": "Perú", "Madrid": "España"}
 # Ciudades iniciales con sus coordenadas (latitud, longitud)
 CIUDADES = {
     "Quito": (-0.18065, -78.46784), "Guayaquil": (-2.17098, -79.92236), "Cuenca": (-2.90055, -79.00453),
@@ -283,10 +286,11 @@ def cargar_catalogos():
     with engine.begin() as con:
         for nombre, (lat, lon) in CIUDADES.items():
             con.execute(text("""
-                INSERT INTO vuelos.ciudades (nombre, latitud, longitud) VALUES (:n, :lat, :lon)
+                INSERT INTO vuelos.ciudades (nombre, pais, latitud, longitud) VALUES (:n, :p, :lat, :lon)
                 ON CONFLICT (nombre) DO UPDATE SET latitud = COALESCE(vuelos.ciudades.latitud, EXCLUDED.latitud),
-                                                   longitud = COALESCE(vuelos.ciudades.longitud, EXCLUDED.longitud)
-            """), {"n": nombre, "lat": lat, "lon": lon})
+                                                   longitud = COALESCE(vuelos.ciudades.longitud, EXCLUDED.longitud),
+                                                   pais = COALESCE(vuelos.ciudades.pais, EXCLUDED.pais)
+            """), {"n": nombre, "p": PAISES.get(nombre, "Ecuador"), "lat": lat, "lon": lon})
         con.execute(text("""
             INSERT INTO vuelos.ciudades (nombre)
             SELECT origen FROM vuelos.vuelos UNION SELECT destino FROM vuelos.vuelos

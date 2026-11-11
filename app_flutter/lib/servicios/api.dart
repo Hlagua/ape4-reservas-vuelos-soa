@@ -153,15 +153,37 @@ class Api {
   Future<Map<String, dynamic>> coordenadasCiudad(String nombre) =>
       _pedir('GET', '/api/vuelos/ciudades/coordenadas', query: {'nombre': nombre});
 
-  Future<Map<String, dynamic>> crearCiudad(String nombre, {double? latitud, double? longitud}) =>
-      _pedir('POST', '/api/vuelos/ciudades', cuerpo: {'nombre': nombre, 'latitud': latitud, 'longitud': longitud});
+  /// Buscador de ciudades del mundo (OpenStreetMap): [{ciudad, pais, region, latitud, longitud}].
+  Future<Map<String, dynamic>> buscarCiudades(String ciudad, {String? pais}) =>
+      _pedir('GET', '/api/vuelos/ciudades/buscar',
+          query: {'q': ciudad, if (pais != null && pais.trim().isNotEmpty) 'pais': pais.trim()});
+
+  /// Ciudad más cercana al punto tocado en el mapa.
+  Future<Map<String, dynamic>> ciudadEnMapa(double latitud, double longitud) =>
+      _pedir('GET', '/api/vuelos/ciudades/en-mapa', query: {'latitud': '$latitud', 'longitud': '$longitud'});
+
+  Future<Map<String, dynamic>> crearCiudad(String nombre, {String? pais, double? latitud, double? longitud}) =>
+      _pedir('POST', '/api/vuelos/ciudades',
+          cuerpo: {'nombre': nombre, 'pais': pais, 'latitud': latitud, 'longitud': longitud});
+
+  Future<Map<String, dynamic>> editarCiudad(int id, String nombre,
+          {String? pais, double? latitud, double? longitud}) =>
+      _pedir('PUT', '/api/vuelos/ciudades/$id',
+          cuerpo: {'nombre': nombre, 'pais': pais, 'latitud': latitud, 'longitud': longitud});
 
   Future<Map<String, dynamic>> crearAerolinea(String nombre, String codigo) =>
       _pedir('POST', '/api/vuelos/aerolineas', cuerpo: {'nombre': nombre, 'codigo': codigo});
 
+  Future<Map<String, dynamic>> editarAerolinea(int id, String nombre, String codigo) =>
+      _pedir('PUT', '/api/vuelos/aerolineas/$id', cuerpo: {'nombre': nombre, 'codigo': codigo});
+
   /// clases: [{clase, filas, configuracion: '3-3'}]
   Future<Map<String, dynamic>> crearAvion(String nombre, List<Map<String, Object>> clases) =>
       _pedir('POST', '/api/vuelos/aviones', cuerpo: {'nombre': nombre, 'clases': clases});
+
+  /// Sin clases se conserva la cabina (solo cambia el nombre).
+  Future<Map<String, dynamic>> editarAvion(int id, String nombre, List<Map<String, Object>>? clases) =>
+      _pedir('PUT', '/api/vuelos/aviones/$id', cuerpo: {'nombre': nombre, 'clases': ?clases});
 
   /// origen, destino, aerolinea, avion, fecha_salida, fecha_llegada (YYYY-MM-DDTHH:MM) y precio.
   Future<Map<String, dynamic>> crearVuelo(Map<String, Object> datos) => _pedir('POST', '/api/vuelos', cuerpo: datos);

@@ -240,7 +240,7 @@ class _PintorMapa extends CustomPainter {
       ..color = _borde
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1;
-    for (final poligono in _continentes) {
+    for (final poligono in continentesMundo) {
       final path = Path();
       for (var i = 0; i < poligono.length; i += 2) {
         final p = proyectar(Offset(poligono[i], poligono[i + 1]));
@@ -341,7 +341,7 @@ class _PintorMapa extends CustomPainter {
 }
 
 /// Contornos simplificados de los continentes: pares (longitud, latitud).
-const List<List<double>> _continentes = [
+const List<List<double>> continentesMundo = [
   // Sudamérica
   [-77.5, 8.5, -75.5, 10.8, -72, 12.2, -70, 11.5, -67, 10.6, -62, 10.5, -60, 8.5, -57, 6, -54, 5.8, -51.5, 4.5,
    -50, 1.5, -48, -1, -44, -2.5, -40, -3, -37, -5, -35, -7.5, -35.5, -10, -38.5, -13, -39, -17.5, -40.5, -21,

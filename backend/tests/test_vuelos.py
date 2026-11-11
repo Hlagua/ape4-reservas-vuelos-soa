@@ -111,7 +111,10 @@ def test_login_devuelve_el_rol(admin, usuario):
 def test_catalogos_y_aviones_con_distinto_numero_de_asientos(base):
     catalogos = requests.get(f"{base}/api/vuelos/catalogos").json()
     assert {"Quito", "Guayaquil", "Ambato"} <= set(catalogos["ciudades"])
-    assert {"nombre": "LATAM", "codigo": "LA"} in catalogos["aerolineas"]
+    latam = next(a for a in catalogos["aerolineas"] if a["nombre"] == "LATAM")
+    assert latam["codigo"] == "LA" and latam["vuelos"] > 0 and latam["id"]
+    quito = next(c for c in catalogos["ciudades_detalle"] if c["nombre"] == "Quito")
+    assert quito["pais"] == "Ecuador" and quito["vuelos"] > 0 and quito["latitud"] == -0.18065
     aviones = {a["avion"]: a for a in catalogos["aviones"]}
     assert aviones["Airbus A340-600"]["total_asientos"] == 226
     assert aviones["Airbus A320"]["total_asientos"] == 162
@@ -233,3 +236,96 @@ def test_coordenadas_de_ciudad_solo_administrador(base, usuario, admin):
     if resp.status_code == 200:
         datos = resp.json()
         assert -2 < datos["latitud"] < 0 and -79 < datos["longitud"] < -77  # Tena, Napo (Ecuador)
+
+
+@solo_local
+def test_admin_edita_ciudad_aerolinea_y_avion(base, admin):
+    """Al renombrar, los vuelos se actualizan; la cabina de un avión con vuelos no se puede cambiar."""
+    h = admin["headers"]
+    ciudad, linea, avion = nombre_aleatorio("Villa "), nombre_aleatorio("Aero "), nombre_aleatorio("Avion ")
+    nueva_ciudad, nueva_linea, nuevo_avion = ciudad + " Nueva", linea + " Nueva", avion + " Neo"
+    codigo = uuid.uuid4().hex[:2].upper()
+    vuelo = None
+    try:
+        assert requests.post(f"{base}/api/vuelos/ciudades", headers=h, json={
+            "nombre": ciudad, "pais": "Ecuador", "latitud": 1, "longitud": -79}).status_code == 201
+        resp = requests.post(f"{base}/api/vuelos/aerolineas", headers=h, json={"nombre": linea, "codigo": codigo})
+        if resp.status_code == 409:  # código al azar repetido
+            return
+        cabina = [{"clase": "ECONOMY", "filas": 10, "configuracion": "3-3"}]
+        assert requests.post(f"{base}/api/vuelos/aviones", headers=h,
+                             json={"nombre": avion, "clases": cabina}).status_code == 201
+        catalogos = requests.get(f"{base}/api/vuelos/catalogos").json()
+        id_ciudad = next(c["id"] for c in catalogos["ciudades_detalle"] if c["nombre"] == ciudad)
+        id_linea = next(a["id"] for a in catalogos["aerolineas"] if a["nombre"] == linea)
+        id_avion = next(a["id"] for a in catalogos["aviones"] if a["avion"] == avion)
+
+        # Sin vuelos la cabina sí se puede cambiar
+        resp = requests.put(f"{base}/api/vuelos/aviones/{id_avion}", headers=h, json={
+            "nombre": avion, "clases": [{"clase": "ECONOMY", "filas": 12, "configuracion": "3-3"}]})
+        assert resp.status_code == 200 and resp.json()["avion"]["total_asientos"] == 72, resp.text
+
+        vuelo = requests.post(f"{base}/api/vuelos", headers=h, json=datos_vuelo(
+            origen=ciudad, aerolinea=linea, avion=avion)).json()["vuelo"]
+
+        resp = requests.put(f"{base}/api/vuelos/ciudades/{id_ciudad}", headers=h, json={
+            "nombre": nueva_ciudad, "pais": "Ecuador", "latitud": 1.5, "longitud": -79.5})
+        assert resp.status_code == 200 and resp.json()["vuelos_actualizados"] == 1, resp.text
+        assert requests.put(f"{base}/api/vuelos/ciudades/{id_ciudad}", headers=h,
+                            json={"nombre": "Quito"}).status_code == 409
+        assert requests.put(f"{base}/api/vuelos/ciudades/999999", headers=h,
+                            json={"nombre": "Lugar Inexistente"}).status_code == 404
+
+        resp = requests.put(f"{base}/api/vuelos/aerolineas/{id_linea}", headers=h,
+                            json={"nombre": nueva_linea, "codigo": codigo})
+        assert resp.status_code == 200 and resp.json()["vuelos_actualizados"] == 1, resp.text
+        assert requests.put(f"{base}/api/vuelos/aerolineas/{id_linea}", headers=h,
+                            json={"nombre": nueva_linea, "codigo": "LA"}).status_code == 409
+
+        # Con vuelos: cambiar la cabina se rechaza; el nombre sí (y la misma cabina se acepta)
+        resp = requests.put(f"{base}/api/vuelos/aviones/{id_avion}", headers=h, json={
+            "nombre": avion, "clases": [{"clase": "ECONOMY", "filas": 20, "configuracion": "3-3"}]})
+        assert resp.status_code == 409 and "clases" in resp.json()["detalle"]
+        resp = requests.put(f"{base}/api/vuelos/aviones/{id_avion}", headers=h, json={
+            "nombre": nuevo_avion, "clases": [{"clase": "ECONOMY", "filas": 12, "configuracion": "3-3"}]})
+        assert resp.status_code == 200 and resp.json()["vuelos_actualizados"] == 1, resp.text
+
+        actualizado = requests.get(f"{base}/api/vuelos/{vuelo['id']}").json()
+        assert (actualizado["origen"], actualizado["aerolinea"], actualizado["avion"]) == (
+            nueva_ciudad, nueva_linea, nuevo_avion)
+        mapa = requests.get(f"{base}/api/vuelos/{vuelo['id']}/asientos").json()
+        assert mapa["avion"] == nuevo_avion and mapa["clases"][0]["filas"][-1] == 12
+    finally:
+        if vuelo:
+            borrar_vuelo(vuelo["id"])
+        for tabla, nombres in (("ciudades", (ciudad, nueva_ciudad)), ("aerolineas", (linea, nueva_linea)),
+                               ("aviones", (avion, nuevo_avion))):
+            for n in nombres:
+                borrar_catalogo(tabla, n)
+
+
+def test_editar_catalogos_solo_administrador(base, usuario):
+    for ruta in ("ciudades/1", "aerolineas/1", "aviones/1"):
+        assert requests.put(f"{base}/api/vuelos/{ruta}", json={"nombre": "X"}, headers=usuario["headers"]).status_code == 403
+    for ruta in ("ciudades/buscar?q=Quito", "ciudades/en-mapa?latitud=0&longitud=0"):
+        assert requests.get(f"{base}/api/vuelos/{ruta}", headers=usuario["headers"]).status_code == 403
+
+
+def test_buscador_y_mapa_de_ciudades_del_mundo(base, admin):
+    h = admin["headers"]
+    assert requests.get(f"{base}/api/vuelos/ciudades/buscar", params={"q": "Q"}, headers=h).status_code == 400
+    assert requests.get(f"{base}/api/vuelos/ciudades/en-mapa", params={"latitud": 95, "longitud": 0},
+                        headers=h).status_code == 400
+    # Con conexión al servicio de mapas (si no responde devuelve 503)
+    resp = requests.get(f"{base}/api/vuelos/ciudades/buscar", params={"q": "Machala"}, headers=h)
+    if resp.status_code == 200:
+        primera = resp.json()["ciudades"][0]
+        assert (primera["ciudad"], primera["pais"]) == ("Machala", "Ecuador")  # Ecuador primero
+    resp = requests.get(f"{base}/api/vuelos/ciudades/buscar", params={"q": "Lima", "pais": "Perú"}, headers=h)
+    if resp.status_code == 200:
+        assert all(c["pais"] == "Perú" for c in resp.json()["ciudades"])
+    resp = requests.get(f"{base}/api/vuelos/ciudades/en-mapa", params={"latitud": -0.2, "longitud": -78.5}, headers=h)
+    if resp.status_code == 200:
+        assert (resp.json()["ciudad"], resp.json()["pais"]) == ("Quito", "Ecuador")
+    resp = requests.get(f"{base}/api/vuelos/ciudades/en-mapa", params={"latitud": 0, "longitud": -30}, headers=h)
+    assert resp.status_code in (404, 503)  # océano Atlántico

@@ -66,7 +66,7 @@ Sigue el modelo de la guía (usuarios, vuelos, reservas y tokens), más las tabl
 | `usuarios.usuarios` | Usuarios | **id** (PK), nombre, **correo** (único), password_hash, rol (CLIENTE/ADMIN), fecha_registro |
 | `autenticacion.tokens` | Autenticación | **id** (PK), **usuario_id** (FK), jti, token_hash (SHA-256 del JWT), fecha_emision, expiracion, estado (ACTIVO/REVOCADO) |
 | `vuelos.vuelos` | Vuelos | **id** (PK), codigo, aerolinea, avion, origen, destino, **fecha**, **hora_salida**, **hora_llegada**, precio, asientos_totales, **asientos_disponibles** |
-| `vuelos.ciudades` · `vuelos.aerolineas` · `vuelos.aviones` | Vuelos | Catálogos del administrador: ciudad (nombre, latitud, longitud), aerolínea (nombre, código de 2 caracteres), avión (nombre, clases con filas y configuración, total_asientos) |
+| `vuelos.ciudades` · `vuelos.aerolineas` · `vuelos.aviones` | Vuelos | Catálogos del administrador: ciudad (nombre, país, latitud, longitud), aerolínea (nombre, código de 2 caracteres), avión (nombre, clases con filas y configuración, total_asientos) |
 | `vuelos.asientos` | Vuelos | **PK (vuelo_id, asiento)**, vuelo_id (FK), clase, estado (BLOQUEADO/RETENIDO/OCUPADO), usuario_id, reserva_id, expira_en |
 | `reservas.reservas` | Reservas | **id** (PK), **usuario_id** (FK), **vuelo_id** (FK), **cantidad_asientos**, total, estado, fecha_reserva |
 | `reservas.pasajeros` | Reservas | id (PK), reserva_id (FK), asiento, clase, nombre, tipo_documento, documento, precio |
@@ -227,7 +227,11 @@ Mientras un servicio está apagado, `GET /api/salud` lo muestra como `caído`.
 El **administrador** es un usuario con rol `ADMIN` e ingresa con email y contraseña igual que un cliente. El rol viaja en el token JWT y los servicios lo validan:
 
 - **Crear vuelos:** elige origen, destino, aerolínea y tipo de avión de los catálogos, la fecha y hora de salida y de llegada, y el precio base. El vuelo aparece en la búsqueda con el mapa de asientos de ese avión.
-- **Catálogos:** crea ciudades (origen y destino, con coordenadas opcionales para el mapa), aerolíneas (con su código, que es el prefijo de sus vuelos) y aviones (clases, filas y configuración por fila, por ejemplo 3-3 o 2-4-2).
+- **Catálogos:** menú con una sub-pantalla por catálogo, donde se agrega y se edita:
+  - **Ciudades:** se eligen del mapamundi (tocando un punto) o del buscador de ciudades del mundo (país y ciudad, OpenStreetMap); no se escriben a mano. Endpoints `GET /api/vuelos/ciudades/buscar?q=&pais=`, `GET /api/vuelos/ciudades/en-mapa?latitud=&longitud=` y `PUT /api/vuelos/ciudades/<id>`.
+  - **Aerolíneas:** nombre y código (prefijo de sus vuelos nuevos). `PUT /api/vuelos/aerolineas/<id>`.
+  - **Aviones:** clases, filas y configuración por fila (3-3, 2-4-2...). Si el avión ya tiene vuelos solo se cambia el nombre. `PUT /api/vuelos/aviones/<id>`.
+  - Al renombrar, los vuelos que usan ese registro se actualizan en la misma transacción.
 - En **Buscar vuelos** puede ver los vuelos y el mapa de asientos, pero **no puede seleccionar ni comprar** (el backend responde 403).
 
 Al **comprar**, el cliente ve una animación: el mapamundi se acerca a la ruta y un avión vuela del origen al destino; al final se muestran la reserva, las horas de salida y llegada, la duración y el total pagado.

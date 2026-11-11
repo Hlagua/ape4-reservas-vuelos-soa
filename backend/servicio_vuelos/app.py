@@ -200,9 +200,11 @@ def catalogo_ciudades(con):
     return con.execute(text("SELECT nombre FROM vuelos.ciudades ORDER BY nombre")).scalars().all()
 
 
-def catalogo_aerolineas(con):
-    return [{"nombre": f.nombre, "codigo": f.codigo} for f in con.execute(text(
-        "SELECT nombre, codigo FROM vuelos.aerolineas ORDER BY nombre"))]
+def catalogo_aerolineas(con, con_uso=False):
+    uso = ", (SELECT COUNT(*) FROM vuelos.vuelos v WHERE v.aerolinea = a.nombre) AS vuelos" if con_uso else ""
+    filas = con.execute(text(f"SELECT a.id, a.nombre, a.codigo{uso} FROM vuelos.aerolineas a ORDER BY a.nombre"))
+    return [{"id": f.id, "nombre": f.nombre, "codigo": f.codigo, **({"vuelos": f.vuelos} if con_uso else {})}
+            for f in filas]
 
 
 @app.get("/api/vuelos/catalogos")
@@ -214,11 +216,30 @@ def listar_catalogos():
       200: {description: Catálogos}
     """
     with engine.connect() as con:
-        ciudades, aerolineas = catalogo_ciudades(con), catalogo_aerolineas(con)
-        coordenadas = {f.nombre: [float(f.latitud), float(f.longitud)] for f in con.execute(text(
-            "SELECT nombre, latitud, longitud FROM vuelos.ciudades WHERE latitud IS NOT NULL AND longitud IS NOT NULL"))}
-    return jsonify({"ciudades": ciudades, "coordenadas": coordenadas, "aerolineas": aerolineas,
-                    "aviones": [c.resumen() for c in cargar_cabinas().values()]})
+        aerolineas = catalogo_aerolineas(con, con_uso=True)
+        detalle = con.execute(text("""
+            SELECT c.id, c.nombre, c.pais, c.latitud, c.longitud,
+                   (SELECT COUNT(*) FROM vuelos.vuelos v WHERE v.origen = c.nombre OR v.destino = c.nombre) AS vuelos
+            FROM vuelos.ciudades c ORDER BY c.nombre
+        """)).all()
+        aviones_bd = {f.nombre: f for f in con.execute(text("""
+            SELECT a.id, a.nombre, (SELECT COUNT(*) FROM vuelos.vuelos v WHERE v.avion = a.nombre) AS vuelos
+            FROM vuelos.aviones a
+        """))}
+    con_coordenadas = [f for f in detalle if f.latitud is not None and f.longitud is not None]
+    aviones = []
+    for cab in cargar_cabinas().values():
+        fila = aviones_bd.get(cab.avion)
+        aviones.append({**cab.resumen(), "id": fila.id if fila else None, "vuelos": fila.vuelos if fila else 0})
+    return jsonify({
+        "ciudades": [f.nombre for f in detalle],
+        "coordenadas": {f.nombre: [float(f.latitud), float(f.longitud)] for f in con_coordenadas},
+        "ciudades_detalle": [{"id": f.id, "nombre": f.nombre, "pais": f.pais, "vuelos": f.vuelos,
+                              "latitud": None if f.latitud is None else float(f.latitud),
+                              "longitud": None if f.longitud is None else float(f.longitud)} for f in detalle],
+        "aerolineas": aerolineas,
+        "aviones": aviones,
+    })
 
 
 @app.get("/api/vuelos/aviones")
@@ -232,7 +253,7 @@ def listar_aviones():
     return jsonify({"aviones": [c.resumen() for c in cargar_cabinas().values()]})
 
 
-SIMBOLOS_NOMBRE = " .'-"
+SIMBOLOS_NOMBRE = " .'-’()"
 
 
 def nombre_catalogo(data, campo, etiqueta, letras_solo=True):
@@ -296,6 +317,107 @@ def geocodificar(nombre):
     return round(float(mundo["lat"]), 5), round(float(mundo["lon"]), 5), mundo.get("display_name", nombre)
 
 
+NOMINATIM_REVERSO_URL = "https://nominatim.openstreetmap.org/reverse"
+TIPOS_CIUDAD = ("city", "town", "village", "municipality", "hamlet", "suburb")
+_cache_lugares = {}
+
+
+def _lugar_a_ciudad(r):
+    """{ciudad, pais, latitud, longitud, lugar} a partir de un resultado de Nominatim (con addressdetails)."""
+    direccion = r.get("address") or {}
+    ciudad = next((direccion[t] for t in TIPOS_CIUDAD if direccion.get(t)), None)
+    if r.get("addresstype") in TIPOS_CIUDAD and r.get("name"):
+        ciudad = r["name"]
+    ciudad = ciudad or r.get("name") or direccion.get("county") or direccion.get("state")
+    if not ciudad or not direccion.get("country"):
+        return None
+    return {"ciudad": ciudad, "pais": direccion["country"], "codigo_pais": (direccion.get("country_code") or "").upper(),
+            "region": direccion.get("state") or direccion.get("region") or direccion.get("county"),
+            "latitud": round(float(r["lat"]), 5), "longitud": round(float(r["lon"]), 5),
+            "lugar": r.get("display_name", ciudad)}
+
+
+def _consultar_mapa(url, parametros):
+    clave = (url, tuple(sorted(parametros.items())))
+    if clave in _cache_lugares:
+        return _cache_lugares[clave]
+    try:
+        resp = requests.get(url, headers=NOMINATIM_HEADERS, timeout=8, params={
+            "format": "jsonv2", "addressdetails": 1, "accept-language": "es", **parametros})
+        datos = resp.json() if resp.ok else None
+    except (requests.RequestException, ValueError):
+        datos = None
+    if datos is None:
+        raise ErrorApi("El servicio de mapas no respondió, intente de nuevo", 503)
+    if len(_cache_lugares) > 500:
+        _cache_lugares.clear()
+    _cache_lugares[clave] = datos
+    return datos
+
+
+@app.get("/api/vuelos/ciudades/buscar")
+def buscar_ciudades_del_mundo():
+    """[Administrador] Buscador de ciudades del mundo (OpenStreetMap): devuelve ciudad y país
+    ---
+    tags: [Catálogos]
+    security: [{Bearer: []}]
+    parameters:
+      - {in: query, name: q, type: string, required: true, example: Esmeraldas, description: Ciudad}
+      - {in: query, name: pais, type: string, example: Ecuador, description: "País (opcional, filtra)"}
+    responses:
+      200: {description: "Lista de {ciudad, pais, region, latitud, longitud, lugar}; primero las de Ecuador"}
+      400: {description: Texto muy corto}
+      403: {description: Solo el administrador}
+      503: {description: El servicio de mapas no respondió}
+    """
+    requerir_admin()
+    texto = " ".join(str(request.args.get("q") or "").split())
+    if len(texto) < 2:
+        raise ErrorApi("Escriba al menos 2 letras", 400)
+    pais = " ".join(str(request.args.get("pais") or "").split())
+    consulta = {"city": texto, "country": pais} if pais else {"q": texto}
+    resultados = _consultar_mapa(NOMINATIM_URL, {**consulta, "limit": 10, "featureType": "settlement"})
+    ciudades, vistas = [], set()
+    for r in resultados if isinstance(resultados, list) else []:
+        c = _lugar_a_ciudad(r)
+        clave = c and (_simple(c["ciudad"]), _simple(c["pais"]), _simple(c["region"] or ""))
+        if c and clave not in vistas:
+            vistas.add(clave)
+            ciudades.append(c)
+    ciudades.sort(key=lambda c: c["codigo_pais"] != "EC")  # primero Ecuador, luego el resto del mundo
+    return jsonify({"total": len(ciudades[:8]), "ciudades": ciudades[:8]})
+
+
+@app.get("/api/vuelos/ciudades/en-mapa")
+def ciudad_en_mapa():
+    """[Administrador] Ciudad más cercana a un punto elegido en el mapa (OpenStreetMap)
+    ---
+    tags: [Catálogos]
+    security: [{Bearer: []}]
+    parameters:
+      - {in: query, name: latitud, type: number, required: true, example: -0.18}
+      - {in: query, name: longitud, type: number, required: true, example: -78.47}
+    responses:
+      200: {description: "{ciudad, pais, region, latitud, longitud, lugar}"}
+      400: {description: Coordenadas inválidas}
+      403: {description: Solo el administrador}
+      404: {description: No hay una ciudad en ese punto (por ejemplo, el mar)}
+      503: {description: El servicio de mapas no respondió}
+    """
+    requerir_admin()
+    try:
+        latitud, longitud = round(float(request.args["latitud"]), 3), round(float(request.args["longitud"]), 3)
+        if not (-90 <= latitud <= 90 and -180 <= longitud <= 180):
+            raise ValueError
+    except (KeyError, TypeError, ValueError):
+        raise ErrorApi("Latitud (-90 a 90) y longitud (-180 a 180) inválidas", 400)
+    r = _consultar_mapa(NOMINATIM_REVERSO_URL, {"lat": latitud, "lon": longitud, "zoom": 10})
+    ciudad = _lugar_a_ciudad(r) if isinstance(r, dict) and "lat" in r else None
+    if ciudad is None:
+        raise ErrorApi("No hay una ciudad en ese punto del mapa; elija un punto en tierra", 404)
+    return jsonify(ciudad)
+
+
 @app.get("/api/vuelos/ciudades/coordenadas")
 def coordenadas_ciudad():
     """[Administrador] Buscar la latitud y longitud de una ciudad (OpenStreetMap)
@@ -337,6 +459,7 @@ def crear_ciudad():
           required: [nombre]
           properties:
             nombre: {type: string, example: Esmeraldas}
+            pais: {type: string, example: Ecuador}
             latitud: {type: number, example: 0.9592, description: "Opcional (-90 a 90); si falta se busca sola"}
             longitud: {type: number, example: -79.6539, description: "Opcional (-180 a 180); si falta se busca sola"}
     responses:
@@ -346,8 +469,24 @@ def crear_ciudad():
       409: {description: La ciudad ya existe}
     """
     requerir_admin()
-    data = leer_json(request)
-    nombre = nombre_catalogo(data, "nombre", "El nombre de la ciudad").title()
+    nombre, pais, coordenadas = datos_ciudad(leer_json(request))
+    repetido = f"La ciudad {nombre} ya existe"
+    if ya_existe("ciudades", nombre):
+        raise ErrorApi(repetido, 409, {"nombre": repetido})
+    insertar_unico("INSERT INTO vuelos.ciudades (nombre, pais, latitud, longitud) VALUES (:n, :p, :latitud, :longitud)",
+                   {"n": nombre, "p": pais, **coordenadas}, repetido, "nombre")
+    return jsonify({"mensaje": f"Ciudad {nombre}{f' ({pais})' if pais else ''} creada", "ciudad": nombre,
+                    "pais": pais, **coordenadas}), 201
+
+
+def datos_ciudad(data):
+    """Nombre, país y coordenadas de una ciudad (si faltan las coordenadas se buscan en el mapa)."""
+    nombre = nombre_catalogo(data, "nombre", "El nombre de la ciudad")
+    if nombre.islower() or nombre.isupper():
+        nombre = nombre.title()
+    pais = None
+    if data.get("pais") not in (None, ""):
+        pais = nombre_catalogo(data, "pais", "El país")
     coordenadas = {}
     for campo, limite in (("latitud", 90), ("longitud", 180)):
         valor = data.get(campo)
@@ -367,12 +506,69 @@ def crear_ciudad():
         encontrado = geocodificar(nombre)
         if encontrado:
             coordenadas["latitud"], coordenadas["longitud"] = encontrado[0], encontrado[1]
-    repetido = f"La ciudad {nombre} ya existe"
-    if ya_existe("ciudades", nombre):
+    return nombre, pais, coordenadas
+
+
+def renombrar_en_vuelos(con, columnas, anterior, nuevo):
+    """Los vuelos guardan el nombre (origen, destino, aerolínea, avión): al renombrar se actualizan."""
+    if anterior == nuevo:
+        return 0
+    return sum(con.execute(text(f"UPDATE vuelos.vuelos SET {c} = :n WHERE {c} = :a"),
+                           {"n": nuevo, "a": anterior}).rowcount for c in columnas)
+
+
+def bloquear_catalogo(con, tabla, item_id, nombre, etiqueta):
+    """Fila actual del catálogo (bloqueada) y verificación de que el nombre nuevo no lo use otra."""
+    actual = con.execute(text(f"SELECT * FROM vuelos.{tabla} WHERE id = :id FOR UPDATE"), {"id": item_id}).first()
+    if not actual:
+        raise ErrorApi(f"{etiqueta} no encontrada" if etiqueta.startswith("La") else f"{etiqueta} no encontrado", 404)
+    if con.execute(text(f"SELECT 1 FROM vuelos.{tabla} WHERE lower(nombre) = lower(:n) AND id <> :id"),
+                   {"n": nombre, "id": item_id}).first():
+        repetido = f"Ya existe otro registro llamado {nombre}"
         raise ErrorApi(repetido, 409, {"nombre": repetido})
-    insertar_unico("INSERT INTO vuelos.ciudades (nombre, latitud, longitud) VALUES (:n, :latitud, :longitud)",
-                   {"n": nombre, **coordenadas}, repetido, "nombre")
-    return jsonify({"mensaje": f"Ciudad {nombre} creada", "ciudad": nombre, **coordenadas}), 201
+    return actual
+
+
+@app.put("/api/vuelos/ciudades/<int:ciudad_id>")
+def editar_ciudad(ciudad_id):
+    """[Administrador] Editar una ciudad (nombre, país y coordenadas); sus vuelos se actualizan
+    ---
+    tags: [Catálogos]
+    security: [{Bearer: []}]
+    parameters:
+      - {in: path, name: ciudad_id, type: integer, required: true}
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required: [nombre]
+          properties:
+            nombre: {type: string, example: Esmeraldas}
+            pais: {type: string, example: Ecuador}
+            latitud: {type: number, example: 0.9592}
+            longitud: {type: number, example: -79.6539}
+    responses:
+      200: {description: Ciudad actualizada}
+      400: {description: Datos inválidos}
+      403: {description: Solo el administrador}
+      404: {description: Ciudad no encontrada}
+      409: {description: Otra ciudad ya tiene ese nombre}
+    """
+    requerir_admin()
+    nombre, pais, coordenadas = datos_ciudad(leer_json(request))
+    try:
+        with engine.begin() as con:
+            actual = bloquear_catalogo(con, "ciudades", ciudad_id, nombre, "La ciudad")
+            con.execute(text("""UPDATE vuelos.ciudades SET nombre = :n, pais = :p, latitud = :latitud,
+                                longitud = :longitud WHERE id = :id"""),
+                        {"n": nombre, "p": pais, "id": ciudad_id, **coordenadas})
+            vuelos = renombrar_en_vuelos(con, ("origen", "destino"), actual.nombre, nombre)
+    except IntegrityError:
+        raise ErrorApi(f"La ciudad {nombre} ya existe", 409, {"nombre": f"La ciudad {nombre} ya existe"})
+    extra = f"; {vuelos} vuelos actualizados" if vuelos else ""
+    return jsonify({"mensaje": f"Ciudad {nombre} actualizada{extra}", "ciudad": nombre, "pais": pais,
+                    "vuelos_actualizados": vuelos, **coordenadas})
 
 
 @app.post("/api/vuelos/aerolineas")
@@ -398,17 +594,62 @@ def crear_aerolinea():
       409: {description: El nombre o el código ya existen}
     """
     requerir_admin()
-    data = leer_json(request)
-    nombre = nombre_catalogo(data, "nombre", "El nombre de la aerolínea", letras_solo=False)
-    codigo = str(data.get("codigo") or "").strip().upper()
-    if len(codigo) != 2 or not codigo.isalnum():
-        raise ErrorApi("Datos inválidos", 400, {"codigo": "El código debe tener 2 letras o números (ej. LA)"})
+    nombre, codigo = datos_aerolinea(leer_json(request))
     if ya_existe("aerolineas", nombre):
         raise ErrorApi(f"La aerolínea {nombre} ya existe", 409, {"nombre": f"La aerolínea {nombre} ya existe"})
     insertar_unico("INSERT INTO vuelos.aerolineas (nombre, codigo) VALUES (:n, :c)", {"n": nombre, "c": codigo},
                    f"El código {codigo} ya lo usa otra aerolínea", "codigo")
     return jsonify({"mensaje": f"Aerolínea {nombre} ({codigo}) creada",
                     "aerolinea": {"nombre": nombre, "codigo": codigo}}), 201
+
+
+def datos_aerolinea(data):
+    nombre = nombre_catalogo(data, "nombre", "El nombre de la aerolínea", letras_solo=False)
+    codigo = str(data.get("codigo") or "").strip().upper()
+    if len(codigo) != 2 or not codigo.isalnum():
+        raise ErrorApi("Datos inválidos", 400, {"codigo": "El código debe tener 2 letras o números (ej. LA)"})
+    return nombre, codigo
+
+
+@app.put("/api/vuelos/aerolineas/<int:aerolinea_id>")
+def editar_aerolinea(aerolinea_id):
+    """[Administrador] Editar una aerolínea; sus vuelos toman el nombre nuevo
+    ---
+    tags: [Catálogos]
+    security: [{Bearer: []}]
+    description: Los vuelos ya creados conservan su código; los nuevos usan el código nuevo.
+    parameters:
+      - {in: path, name: aerolinea_id, type: integer, required: true}
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required: [nombre, codigo]
+          properties:
+            nombre: {type: string, example: Aeroregional}
+            codigo: {type: string, example: AR}
+    responses:
+      200: {description: Aerolínea actualizada}
+      400: {description: Datos inválidos}
+      403: {description: Solo el administrador}
+      404: {description: Aerolínea no encontrada}
+      409: {description: El nombre o el código ya los usa otra aerolínea}
+    """
+    requerir_admin()
+    nombre, codigo = datos_aerolinea(leer_json(request))
+    try:
+        with engine.begin() as con:
+            actual = bloquear_catalogo(con, "aerolineas", aerolinea_id, nombre, "La aerolínea")
+            con.execute(text("UPDATE vuelos.aerolineas SET nombre = :n, codigo = :c WHERE id = :id"),
+                        {"n": nombre, "c": codigo, "id": aerolinea_id})
+            vuelos = renombrar_en_vuelos(con, ("aerolinea",), actual.nombre, nombre)
+    except IntegrityError:
+        repetido = f"El código {codigo} ya lo usa otra aerolínea"
+        raise ErrorApi(repetido, 409, {"codigo": repetido})
+    extra = f"; {vuelos} vuelos actualizados" if vuelos else ""
+    return jsonify({"mensaje": f"Aerolínea {nombre} ({codigo}) actualizada{extra}",
+                    "aerolinea": {"id": aerolinea_id, "nombre": nombre, "codigo": codigo}, "vuelos_actualizados": vuelos})
 
 
 @app.post("/api/vuelos/aviones")
@@ -458,6 +699,72 @@ def crear_avion():
                    {"n": nombre, "c": json.dumps(clases), "t": cab.total}, repetido, "nombre")
     cargar_cabinas()
     return jsonify({"mensaje": f"Avión {nombre} creado con {cab.total} asientos", "avion": cab.resumen()}), 201
+
+
+def _forma_cabina(cab):
+    """Lo que define la cabina para el usuario: clase, número de filas y configuración."""
+    return [(c["clase"], c["filas"], c["configuracion"]) for c in cab.resumen()["clases"]]
+
+
+@app.put("/api/vuelos/aviones/<int:avion_id>")
+def editar_avion(avion_id):
+    """[Administrador] Editar un tipo de avión (nombre y cabina)
+    ---
+    tags: [Catálogos]
+    security: [{Bearer: []}]
+    description: >
+      Si el avión ya tiene vuelos solo se puede cambiar el nombre (sus vuelos se actualizan):
+      cambiar la cabina movería asientos ya vendidos. Sin "clases" se conserva la cabina.
+    parameters:
+      - {in: path, name: avion_id, type: integer, required: true}
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required: [nombre]
+          properties:
+            nombre: {type: string, example: Airbus A321neo}
+            clases: {type: array, items: {type: object}}
+    responses:
+      200: {description: Avión actualizado}
+      400: {description: Datos inválidos}
+      403: {description: Solo el administrador}
+      404: {description: Avión no encontrado}
+      409: {description: Nombre repetido o cabina de un avión con vuelos}
+    """
+    requerir_admin()
+    data = leer_json(request)
+    nombre = nombre_catalogo(data, "nombre", "El nombre del avión", letras_solo=False)
+    nuevas = None
+    if data.get("clases") is not None:
+        nuevas, errores = construir_clases(data.get("clases"))
+        if errores:
+            raise ErrorApi("Cabina inválida", 400, errores)
+    try:
+        with engine.begin() as con:
+            actual = bloquear_catalogo(con, "aviones", avion_id, nombre, "El avión")
+            clases = actual.clases
+            if nuevas is not None and _forma_cabina(crear_cabina(nombre, nuevas)) != _forma_cabina(
+                    crear_cabina(nombre, actual.clases)):
+                usados = con.execute(text("SELECT COUNT(*) FROM vuelos.vuelos WHERE avion = :a"),
+                                     {"a": actual.nombre}).scalar()
+                if usados:
+                    mensaje = (f"La cabina no se puede cambiar: {usados} vuelos usan este avión "
+                               "(solo se puede cambiar el nombre)")
+                    raise ErrorApi(mensaje, 409, {"clases": mensaje})
+                clases = nuevas
+            cab = crear_cabina(nombre, clases)
+            con.execute(text("UPDATE vuelos.aviones SET nombre = :n, clases = CAST(:c AS jsonb), total_asientos = :t "
+                             "WHERE id = :id"), {"n": nombre, "c": json.dumps(clases), "t": cab.total, "id": avion_id})
+            vuelos = renombrar_en_vuelos(con, ("avion",), actual.nombre, nombre)
+    except IntegrityError:
+        raise ErrorApi(f"El avión {nombre} ya existe", 409, {"nombre": f"El avión {nombre} ya existe"})
+    finally:
+        cargar_cabinas()
+    extra = f"; {vuelos} vuelos actualizados" if vuelos else ""
+    return jsonify({"mensaje": f"Avión {nombre} actualizado ({cab.total} asientos){extra}",
+                    "avion": {**cab.resumen(), "id": avion_id}, "vuelos_actualizados": vuelos})
 
 
 # ---------- Creación de vuelos (administrador) ----------
