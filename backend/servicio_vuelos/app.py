@@ -337,22 +337,97 @@ def _lugar_a_ciudad(r):
             "lugar": r.get("display_name", ciudad)}
 
 
-def _consultar_mapa(url, parametros):
-    clave = (url, tuple(sorted(parametros.items())))
+SIN_MAPA = "El servicio de mapas no respondió, intente de nuevo"
+OPEN_METEO_URL = "https://geocoding-api.open-meteo.com/v1/search"
+BIGDATACLOUD_URL = "https://api.bigdatacloud.net/data/reverse-geocode-client"
+
+
+def _pedir_json(url, parametros, cabeceras=None):
+    """JSON de un servicio de mapas, o None si falla (se anota el motivo en el log)."""
+    try:
+        resp = requests.get(url, headers=cabeceras or NOMINATIM_HEADERS, timeout=8, params=parametros)
+        if resp.ok:
+            return resp.json()
+        print(f"[mapas] {url} respondió {resp.status_code}", flush=True)
+    except (requests.RequestException, ValueError) as e:
+        print(f"[mapas] {url} falló: {e}", flush=True)
+    return None
+
+
+def _en_cache(clave, obtener):
     if clave in _cache_lugares:
         return _cache_lugares[clave]
-    try:
-        resp = requests.get(url, headers=NOMINATIM_HEADERS, timeout=8, params={
-            "format": "jsonv2", "addressdetails": 1, "accept-language": "es", **parametros})
-        datos = resp.json() if resp.ok else None
-    except (requests.RequestException, ValueError):
-        datos = None
-    if datos is None:
-        raise ErrorApi("El servicio de mapas no respondió, intente de nuevo", 503)
-    if len(_cache_lugares) > 500:
-        _cache_lugares.clear()
-    _cache_lugares[clave] = datos
+    datos = obtener()
+    if datos is not None:
+        if len(_cache_lugares) > 500:
+            _cache_lugares.clear()
+        _cache_lugares[clave] = datos
     return datos
+
+
+def _nominatim(url, parametros):
+    return _pedir_json(url, {"format": "jsonv2", "addressdetails": 1, "accept-language": "es", **parametros})
+
+
+def _buscar_open_meteo(texto, pais):
+    """Respaldo del buscador: Open-Meteo (GeoNames), sin clave y con nombres en español."""
+    datos = _pedir_json(OPEN_METEO_URL, {"name": texto, "count": 20, "language": "es", "format": "json"})
+    if datos is None:
+        return None
+    ciudades = []
+    for r in datos.get("results") or []:
+        if not r.get("country") or not str(r.get("feature_code", "")).startswith("PPL"):
+            continue
+        if pais and _simple(pais) not in (_simple(r["country"]), (r.get("country_code") or "").casefold()):
+            continue
+        ciudades.append({"ciudad": r["name"], "pais": r["country"], "codigo_pais": (r.get("country_code") or "").upper(),
+                         "region": r.get("admin1"), "latitud": round(float(r["latitude"]), 5),
+                         "longitud": round(float(r["longitude"]), 5),
+                         "lugar": ", ".join(x for x in (r["name"], r.get("admin1"), r["country"]) if x)})
+    return ciudades
+
+
+def _punto_bigdatacloud(latitud, longitud):
+    """Respaldo del mapa: BigDataCloud (sin clave). {} si el punto no está en un país (el mar)."""
+    d = _pedir_json(BIGDATACLOUD_URL, {"latitude": latitud, "longitude": longitud, "localityLanguage": "es"})
+    if d is None:
+        return None
+    ciudad = d.get("city") or d.get("locality")
+    for prefijo in ("Cantón ", "Municipio de ", "Distrito de ", "Provincia de "):
+        if ciudad and ciudad.startswith(prefijo) and d.get("locality"):
+            ciudad = d["locality"]
+    if not ciudad or not d.get("countryName"):
+        return {}
+    return {"ciudad": ciudad, "pais": d["countryName"], "codigo_pais": (d.get("countryCode") or "").upper(),
+            "region": d.get("principalSubdivision") or None, "latitud": latitud, "longitud": longitud,
+            "lugar": ", ".join(x for x in (ciudad, d.get("principalSubdivision"), d["countryName"]) if x)}
+
+
+def buscar_en_mundo(texto, pais):
+    """Ciudades del mundo: OpenStreetMap y, si no responde (p. ej. bloquea la IP del servidor), Open-Meteo."""
+    def obtener():
+        consulta = {"city": texto, "country": pais} if pais else {"q": texto}
+        resultados = _nominatim(NOMINATIM_URL, {**consulta, "limit": 10, "featureType": "settlement"})
+        if isinstance(resultados, list):
+            return [c for c in map(_lugar_a_ciudad, resultados) if c]
+        return _buscar_open_meteo(texto, pais)
+    ciudades = _en_cache(("buscar", _simple(texto), _simple(pais)), obtener)
+    if ciudades is None:
+        raise ErrorApi(SIN_MAPA, 503)
+    return ciudades
+
+
+def ciudad_en_punto(latitud, longitud):
+    """Ciudad más cercana al punto: OpenStreetMap y, si no responde, BigDataCloud. None si es el mar."""
+    def obtener():
+        r = _nominatim(NOMINATIM_REVERSO_URL, {"lat": latitud, "lon": longitud, "zoom": 10})
+        if isinstance(r, dict):
+            return (_lugar_a_ciudad(r) if "lat" in r else None) or {}
+        return _punto_bigdatacloud(latitud, longitud)
+    ciudad = _en_cache(("punto", latitud, longitud), obtener)
+    if ciudad is None:
+        raise ErrorApi(SIN_MAPA, 503)
+    return ciudad or None
 
 
 @app.get("/api/vuelos/ciudades/buscar")
@@ -375,13 +450,10 @@ def buscar_ciudades_del_mundo():
     if len(texto) < 2:
         raise ErrorApi("Escriba al menos 2 letras", 400)
     pais = " ".join(str(request.args.get("pais") or "").split())
-    consulta = {"city": texto, "country": pais} if pais else {"q": texto}
-    resultados = _consultar_mapa(NOMINATIM_URL, {**consulta, "limit": 10, "featureType": "settlement"})
     ciudades, vistas = [], set()
-    for r in resultados if isinstance(resultados, list) else []:
-        c = _lugar_a_ciudad(r)
-        clave = c and (_simple(c["ciudad"]), _simple(c["pais"]), _simple(c["region"] or ""))
-        if c and clave not in vistas:
+    for c in buscar_en_mundo(texto, pais):
+        clave = (_simple(c["ciudad"]), _simple(c["pais"]), _simple(c["region"] or ""))
+        if clave not in vistas:
             vistas.add(clave)
             ciudades.append(c)
     ciudades.sort(key=lambda c: c["codigo_pais"] != "EC")  # primero Ecuador, luego el resto del mundo
@@ -411,8 +483,7 @@ def ciudad_en_mapa():
             raise ValueError
     except (KeyError, TypeError, ValueError):
         raise ErrorApi("Latitud (-90 a 90) y longitud (-180 a 180) inválidas", 400)
-    r = _consultar_mapa(NOMINATIM_REVERSO_URL, {"lat": latitud, "lon": longitud, "zoom": 10})
-    ciudad = _lugar_a_ciudad(r) if isinstance(r, dict) and "lat" in r else None
+    ciudad = ciudad_en_punto(latitud, longitud)
     if ciudad is None:
         raise ErrorApi("No hay una ciudad en ese punto del mapa; elija un punto en tierra", 404)
     return jsonify(ciudad)
