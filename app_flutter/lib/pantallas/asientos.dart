@@ -190,10 +190,23 @@ class _PantallaAsientosState extends State<PantallaAsientos> {
     return !setEquals(_huella(_seleccion), _original);
   }
 
-  /// Flecha atrás (o botón atrás del sistema) en edición: pide confirmación si hay cambios sin guardar.
+  /// La flecha atrás pasa por _alSalir en edición o si hay asientos seleccionados sin reservar.
+  bool get _salidaControlada => widget.edicion != null || _expiran.isNotEmpty;
+
+  /// Flecha atrás (o botón atrás del sistema): pide confirmación si se perderían asientos o cambios.
   Future<void> _alSalir(bool salio, Object? resultado) async {
     if (salio) return;
-    if (_hayCambios) {
+    if (widget.edicion == null && _expiran.isNotEmpty) {
+      final asientos = _expiran.keys.toList()..sort(_ordenAsientos);
+      final ok = await confirmar(context,
+          titulo: 'Salir sin reservar',
+          mensaje: 'Tiene seleccionados los asientos ${asientos.join(', ')} y aún no confirma la reserva. '
+              'Si sale, los asientos se liberarán para otros usuarios. ¿Está seguro de salir?',
+          textoOk: 'Sí, salir');
+      if (!ok || !mounted) return;
+      _liberadosPorMi.addAll(asientos);
+      avisar(context, 'Reserva no realizada, los asientos ${asientos.join(', ')} quedaron libres', TipoAviso.info);
+    } else if (_hayCambios) {
       final ok = await confirmar(context,
           titulo: 'Salir sin guardar',
           mensaje: '¿Está seguro de salir sin guardar los cambios realizados en la reserva '
@@ -373,9 +386,9 @@ class _PantallaAsientosState extends State<PantallaAsientos> {
   @override
   Widget build(BuildContext context) {
     final datos = _datos;
-    // En edición la salida pasa por _alSalir; Navigator.pop (guardar o Cancelar) no se bloquea
+    // La flecha atrás pasa por _alSalir; Navigator.pop (reservar, guardar o Cancelar) no se bloquea
     return PopScope(
-      canPop: widget.edicion == null,
+      canPop: !_salidaControlada,
       onPopInvokedWithResult: _alSalir,
       child: Scaffold(
       appBar: AppBar(
