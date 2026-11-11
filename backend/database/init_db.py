@@ -122,6 +122,20 @@ SCRIPT_TABLAS = [
         precio NUMERIC(10,2) NOT NULL
     )
     """,
+    # Diferencias de precio al modificar una reserva: se cobra solo el aumento o se devuelve la rebaja
+    """
+    CREATE TABLE IF NOT EXISTS reservas.ajustes (
+        id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        reserva_id INTEGER NOT NULL REFERENCES reservas.reservas(id) ON DELETE CASCADE,
+        total_anterior NUMERIC(10,2) NOT NULL,
+        total_nuevo NUMERIC(10,2) NOT NULL,
+        diferencia NUMERIC(10,2) NOT NULL,
+        diferencia_con_iva NUMERIC(10,2) NOT NULL,
+        tipo VARCHAR(10) NOT NULL CHECK (tipo IN ('COBRO', 'DEVOLUCION')),
+        fecha TIMESTAMP NOT NULL DEFAULT LOCALTIMESTAMP
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_ajustes_reserva ON reservas.ajustes (reserva_id)",
 ]
 
 RUTAS = [

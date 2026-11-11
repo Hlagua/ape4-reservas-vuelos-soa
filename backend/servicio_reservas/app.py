@@ -135,6 +135,35 @@ def pasajeros_de(con, reserva_id):
     """), {"id": reserva_id}).all()
 
 
+def con_iva(valor):
+    return round(float(valor) * (1 + config.IVA_PORCENTAJE), 2)
+
+
+def calcular_ajuste(total_anterior, total_nuevo):
+    """Diferencia al modificar: el cliente paga solo el aumento o se le devuelve la rebaja (nunca paga todo otra vez)."""
+    diferencia = round(float(total_nuevo) - float(total_anterior), 2)
+    diferencia_iva = round(con_iva(total_nuevo) - con_iva(total_anterior), 2)
+    if diferencia > 0:
+        tipo, mensaje = "COBRO", f"Se cobra solo la diferencia: ${diferencia_iva:.2f} (IVA incluido)"
+    elif diferencia < 0:
+        tipo, mensaje = "DEVOLUCION", f"Se devuelven ${-diferencia_iva:.2f} (IVA incluido) al cliente"
+    else:
+        tipo, mensaje = "SIN_CAMBIO", "El precio no cambió: no se cobra ni se devuelve nada"
+    return {"total_anterior": round(float(total_anterior), 2), "total_nuevo": round(float(total_nuevo), 2),
+            "total_anterior_con_iva": con_iva(total_anterior), "total_nuevo_con_iva": con_iva(total_nuevo),
+            "diferencia": diferencia, "diferencia_con_iva": diferencia_iva, "tipo": tipo, "mensaje": mensaje}
+
+
+def ajustes_de(con, reserva_id):
+    return [{"fecha": a.fecha.isoformat(timespec="seconds"), "tipo": a.tipo, "total_anterior": float(a.total_anterior),
+             "total_nuevo": float(a.total_nuevo), "diferencia": float(a.diferencia),
+             "diferencia_con_iva": float(a.diferencia_con_iva)}
+            for a in con.execute(text("""
+                SELECT fecha, tipo, total_anterior, total_nuevo, diferencia, diferencia_con_iva
+                FROM reservas.ajustes WHERE reserva_id = :id ORDER BY fecha, id
+            """), {"id": reserva_id})]
+
+
 def guardar_pasajeros(con, reserva_id, pasajeros, precios):
     con.execute(text("DELETE FROM reservas.pasajeros WHERE reserva_id = :id"), {"id": reserva_id})
     con.execute(text("""
@@ -358,7 +387,9 @@ def obtener_reserva(reserva_id):
     with engine.connect() as con:
         fila = obtener_reserva_propia(con, reserva_id, usuario)
         detalle = pasajeros_de(con, reserva_id)
-    return jsonify({"reserva": reserva_a_dict(fila, detalle), "vuelo": obtener_vuelo(fila.vuelo_id)})
+        ajustes = ajustes_de(con, reserva_id)
+    return jsonify({"reserva": {**reserva_a_dict(fila, detalle), "ajustes": ajustes},
+                    "vuelo": obtener_vuelo(fila.vuelo_id)})
 
 
 @app.put("/api/reservas/<int:reserva_id>")
@@ -369,7 +400,9 @@ def modificar_reserva(reserva_id):
     security: [{Bearer: []}]
     description: >
       Se envía la lista completa de pasajeros. Los asientos nuevos se ocupan,
-      los que ya no aparecen se liberan y se recalcula el total.
+      los que ya no aparecen se liberan y se recalcula el total. Los asientos que se mantienen
+      conservan el precio pagado; los nuevos se cobran al precio de su clase. La respuesta trae
+      `ajuste`: si el total sube se cobra solo la diferencia (COBRO) y si baja se devuelve (DEVOLUCION).
     parameters:
       - {in: path, name: reserva_id, type: integer, required: true}
       - in: body
@@ -415,6 +448,14 @@ def modificar_reserva(reserva_id):
             """), {"n": len(pasajeros), "t": total, "id": reserva_id}).first()
             if not fila:
                 raise ErrorApi("La reserva fue cancelada mientras se modificaba", 409)
+            ajuste = calcular_ajuste(actual.total, total)
+            if ajuste["tipo"] != "SIN_CAMBIO":
+                con.execute(text("""
+                    INSERT INTO reservas.ajustes (reserva_id, total_anterior, total_nuevo, diferencia,
+                                                  diferencia_con_iva, tipo)
+                    VALUES (:id, :total_anterior, :total_nuevo, :diferencia, :diferencia_con_iva, :tipo)
+                """), {"id": reserva_id, **{k: ajuste[k] for k in (
+                    "total_anterior", "total_nuevo", "diferencia", "diferencia_con_iva", "tipo")}})
             detalle = pasajeros_de(con, reserva_id)
     except Exception:
         if nuevos:
@@ -423,7 +464,8 @@ def modificar_reserva(reserva_id):
 
     if quitados:
         liberar_asientos(actual.vuelo_id, reserva_id, quitados)
-    return jsonify({"mensaje": "Reserva actualizada correctamente", "reserva": reserva_a_dict(fila, detalle)})
+    return jsonify({"mensaje": "Reserva actualizada correctamente", "reserva": reserva_a_dict(fila, detalle),
+                    "ajuste": ajuste})
 
 
 @app.delete("/api/reservas/<int:reserva_id>")

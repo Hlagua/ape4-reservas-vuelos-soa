@@ -78,7 +78,14 @@ class PantallaReservasState extends State<PantallaReservas> {
                       '${p['documento']} · ${dinero(p['precio'] as num)}'),
                 ),
               const SizedBox(height: 8),
-              Text('Total: ${dinero(reserva['total'] as num)}', style: const TextStyle(fontWeight: FontWeight.bold)),
+              Text('Total: ${dinero(reserva['total'] as num)} (sin IVA)', style: const TextStyle(fontWeight: FontWeight.bold)),
+              if ((reserva['ajustes'] as List?)?.isNotEmpty ?? false) ...[
+                const SizedBox(height: 10),
+                const Text('Cambios de precio por modificaciones (IVA incluido):'),
+                for (final a in reserva['ajustes'] as List)
+                  Text('${fechaHora(a['fecha'] as String)} · '
+                      '${a['tipo'] == 'COBRO' ? 'Cobrado ${dinero(a['diferencia_con_iva'] as num)}' : 'Devuelto ${dinero(-(a['diferencia_con_iva'] as num))}'}'),
+              ],
             ]),
           ),
           actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar'))],

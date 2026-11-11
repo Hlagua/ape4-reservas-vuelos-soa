@@ -65,15 +65,18 @@ Sigue el modelo de la guía (usuarios, vuelos, reservas y tokens), más las tabl
 |---|---|---|
 | `usuarios.usuarios` | Usuarios | **id** (PK), nombre, **correo** (único), password_hash, fecha_registro |
 | `autenticacion.tokens` | Autenticación | **id** (PK), **usuario_id** (FK), jti, token_hash (SHA-256 del JWT), fecha_emision, expiracion, estado (ACTIVO/REVOCADO) |
-| `vuelos.vuelos` | Vuelos | **id** (PK), codigo, aerolinea, origen, destino, **fecha**, **hora_salida**, **hora_llegada**, precio, asientos_totales, **asientos_disponibles** |
+| `vuelos.vuelos` | Vuelos | **id** (PK), codigo, aerolinea, avion, origen, destino, **fecha**, **hora_salida**, **hora_llegada**, precio, asientos_totales, **asientos_disponibles** |
 | `vuelos.asientos` | Vuelos | **PK (vuelo_id, asiento)**, vuelo_id (FK), clase, estado (BLOQUEADO/RETENIDO/OCUPADO), usuario_id, reserva_id, expira_en |
 | `reservas.reservas` | Reservas | **id** (PK), **usuario_id** (FK), **vuelo_id** (FK), **cantidad_asientos**, total, estado, fecha_reserva |
 | `reservas.pasajeros` | Reservas | id (PK), reserva_id (FK), asiento, clase, nombre, tipo_documento, documento, precio |
+| `reservas.ajustes` | Reservas | id (PK), reserva_id (FK), total_anterior, total_nuevo, diferencia, diferencia_con_iva, tipo (COBRO/DEVOLUCION), fecha |
 
 - **Relaciones 1:N:** un usuario tiene muchas reservas y muchos tokens; un vuelo tiene muchas reservas y muchos asientos; una reserva tiene de 1 a 5 pasajeros.
 - **Columnas derivadas:** `fecha`, `hora_salida` y `hora_llegada` se calculan de `fecha_salida` y `fecha_llegada`.
 - **`asientos_disponibles`:** la mantienen actualizada triggers sobre `vuelos.asientos`.
 - **Token:** por seguridad no se guarda el JWT, sino su huella SHA-256.
+- **Tipos de avión:** cada vuelo guarda su avión y el mapa de asientos usa la cabina de ese avión (`backend/servicio_vuelos/cabina.py`): Airbus A340-600 (226 asientos, 4 clases), Boeing 787-9 (252, 3 clases), Airbus A320 (162, 2 clases), Embraer E190 (97, 2 clases) y ATR 72-600 (72, solo Economy).
+- **Modificar sin volver a pagar:** los asientos que se mantienen conservan el precio pagado y los nuevos se cobran al precio de su clase. Si el total sube se cobra solo la diferencia; si baja, se devuelve. Cada diferencia queda en `reservas.ajustes`.
 
 ## Concurrencia en la selección de asientos
 
@@ -97,12 +100,14 @@ Todas las rutas se consumen a través del Gateway: `https://<servicio>.onrender.
 | Autenticación | `POST /api/auth/logout` | Bearer | Revoca el token |
 | Vuelos | `GET /api/vuelos?origen=&destino=&fecha=&pasajeros=` | — | Consulta de vuelos |
 | Vuelos | `GET /api/vuelos/ciudades` | — | Ciudades de origen y destino |
+| Vuelos | `GET /api/vuelos/aviones` | — | Tipos de avión con sus asientos por clase |
+| Gateway | `POST /api/admin/vuelos` | `X-Admin-Key` | Crear vuelo `{origen, destino, aerolinea, avion, fecha_salida, fecha_llegada, precio}` |
 | Vuelos | `GET /api/vuelos/{id}/asientos` | Bearer opcional | Mapa de asientos por clase |
 | Vuelos | `POST` / `DELETE /api/vuelos/{id}/asientos/{asiento}/retener` | Bearer | Seleccionar o soltar un asiento |
 | Reservas | `POST /api/reservas` | Bearer | Reservar `{vuelo_id, pasajeros:[{asiento, nombre, tipo_documento, documento}]}` |
 | Reservas | `POST /api/reservas` | Bearer | Formato de la guía: `{usuario_id, vuelo_id, cantidad}` → `{mensaje, reserva_id, total, estado: "confirmada"}` (asigna los asientos automáticamente) |
 | Reservas | `GET /api/reservas` · `GET /api/reservas/{id}` | Bearer | Gestión: listar y consultar |
-| Reservas | `PUT /api/reservas/{id}` · `DELETE /api/reservas/{id}` | Bearer | Gestión: modificar y cancelar |
+| Reservas | `PUT /api/reservas/{id}` · `DELETE /api/reservas/{id}` | Bearer | Gestión: modificar (responde `ajuste`: cobro o devolución de la diferencia) y cancelar |
 | Facturación | `POST /api/facturas` | — | JSON `{factura, cliente, detalles}` → **XML** con IVA 15 % |
 | Facturación | `GET /api/facturas/reserva/{id}` | Bearer | Factura **XML** de una reserva confirmada |
 
@@ -215,7 +220,7 @@ python servicio.py iniciar vuelos --url https://aeroreservas-backend.onrender.co
 
 Mientras un servicio está apagado, `GET /api/salud` lo muestra como `caído`, y la pantalla **Estado** de la app (solo para el administrador) también.
 
-También se puede hacer **desde la app**: en **Iniciar sesión > Ingresar como administrador** se escribe la clave `ADMIN_KEY`. No es un rol guardado en la base de datos: el Gateway valida la clave y la app solo la mantiene en memoria mientras dura la sesión. El administrador ve las pestañas **Estado** y **Servicios**; en Servicios cada servicio tiene un interruptor para apagarlo o encenderlo.
+También se puede hacer **desde la app**: en **Iniciar sesión > Ingresar como administrador** se escribe la clave `ADMIN_KEY`. No es un rol guardado en la base de datos: el Gateway valida la clave y la app solo la mantiene en memoria mientras dura la sesión. El administrador ve las pestañas **Crear vuelos**, **Estado** y **Servicios**. En Crear vuelos elige origen, destino, aerolínea, tipo de avión, fecha y hora de salida y de llegada, y el precio base; el vuelo aparece en la búsqueda con el mapa de asientos de ese avión. En Servicios cada servicio tiene un interruptor para apagarlo o encenderlo.
 
 Pestañas visibles según quién ingresó:
 
@@ -223,7 +228,7 @@ Pestañas visibles según quién ingresó:
 |---|---|
 | Sin sesión | Buscar vuelos |
 | Cliente (email y contraseña) | Buscar vuelos, Mis reservas, Perfil |
-| Administrador (`ADMIN_KEY`) | Buscar vuelos, Estado, Servicios |
+| Administrador (`ADMIN_KEY`) | Buscar vuelos, Crear vuelos, Estado, Servicios |
 
 ### Caída de la base de datos
 

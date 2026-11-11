@@ -7,7 +7,8 @@ Es el único dueño del esquema `vuelos`. Control de concurrencia de asientos:
   - La clave primaria (vuelo_id, asiento) impide que dos usuarios tengan el mismo
     asiento: si dos clientes lo intentan a la vez, SQL Server acepta solo a uno.
 """
-from datetime import datetime
+import uuid
+from datetime import datetime, timedelta
 
 from flask import jsonify, request
 from sqlalchemy import bindparam, text
@@ -18,12 +19,12 @@ from common.app_base import crear_app
 from common.clientes import requerir_clave_servicio, requerir_token, usuario_opcional
 from common.db import engine
 from common.errores import ErrorApi, leer_json
-from servicio_vuelos.cabina import ASIENTOS, AVION, CLASES, TOTAL_ASIENTOS, precio_asiento
+from servicio_vuelos.cabina import CABINAS, cabina
 
 app = crear_app(__name__, "Vuelos", "Consulta de vuelos, mapa de asientos y control de asientos", usa_bd=True)
 
 MAX_ASIENTOS_POR_USUARIO = config.MAX_ASIENTOS
-COLUMNAS = "id, codigo, aerolinea, avion, origen, destino, fecha_salida, fecha_llegada, precio"
+COLUMNAS = "id, codigo, aerolinea, avion, origen, destino, fecha_salida, fecha_llegada, precio, asientos_totales"
 # Filas que cuentan como no disponibles (las retenciones vencidas se ignoran)
 ASIENTO_ACTIVO = "(estado <> 'RETENIDO' OR expira_en > LOCALTIMESTAMP)"
 
@@ -39,7 +40,7 @@ def vuelo_a_dict(fila):
         "fecha_salida": fila.fecha_salida.isoformat(timespec="minutes"),
         "fecha_llegada": fila.fecha_llegada.isoformat(timespec="minutes"),
         "precio": float(fila.precio),
-        "asientos_totales": TOTAL_ASIENTOS,
+        "asientos_totales": fila.asientos_totales,
     }
     if hasattr(fila, "asientos_disponibles"):
         datos["asientos_disponibles"] = fila.asientos_disponibles
@@ -84,18 +85,19 @@ def liberar_vencidas(vuelo_id):
             """), consulta)
 
 
-def validar_asiento(asiento):
+def validar_asiento(asiento, cab):
+    """Valida que el asiento exista en la cabina del avión del vuelo."""
     asiento = str(asiento or "").strip().upper()
-    if asiento not in ASIENTOS:
-        raise ErrorApi(f"El asiento '{asiento}' no existe en el avión", 404)
+    if asiento not in cab.asientos:
+        raise ErrorApi(f"El asiento '{asiento}' no existe en el avión {cab.avion}", 404)
     return asiento
 
 
-def validar_lista_asientos(data):
+def validar_lista_asientos(data, cab):
     asientos = data.get("asientos")
     if not isinstance(asientos, list) or not asientos:
         raise ErrorApi("Debe enviar la lista de asientos", 400)
-    asientos = [validar_asiento(a) for a in asientos]
+    asientos = [validar_asiento(a, cab) for a in asientos]
     if len(set(asientos)) != len(asientos):
         raise ErrorApi("Hay asientos repetidos", 400)
     return asientos
@@ -118,7 +120,7 @@ def buscar_vuelos():
       400: {description: Parámetros inválidos}
     """
     condiciones = ["fecha_salida > LOCALTIMESTAMP"]
-    parametros = {"total": TOTAL_ASIENTOS}
+    parametros = {}
     if request.args.get("origen"):
         condiciones.append("origen = :origen")
         parametros["origen"] = request.args["origen"].strip()
@@ -141,7 +143,7 @@ def buscar_vuelos():
         filas = con.execute(text(f"""
             SELECT * FROM (
                 -- Disponibilidad en vivo: descuenta solo las retenciones vigentes
-                SELECT {COLUMNAS}, :total - (SELECT COUNT(*) FROM vuelos.asientos a
+                SELECT {COLUMNAS}, asientos_totales - (SELECT COUNT(*) FROM vuelos.asientos a
                                       WHERE a.vuelo_id = v.id AND {ASIENTO_ACTIVO}) AS asientos_disponibles
                 FROM vuelos.vuelos v
             ) x
@@ -164,6 +166,105 @@ def listar_ciudades():
         origenes = con.execute(text("SELECT DISTINCT origen FROM vuelos.vuelos ORDER BY origen")).scalars().all()
         destinos = con.execute(text("SELECT DISTINCT destino FROM vuelos.vuelos ORDER BY destino")).scalars().all()
     return jsonify({"origenes": origenes, "destinos": destinos})
+
+
+@app.get("/api/vuelos/aviones")
+def listar_aviones():
+    """Tipos de avión con su número de asientos por clase
+    ---
+    tags: [Vuelos]
+    responses:
+      200: {description: Aviones disponibles para crear vuelos}
+    """
+    return jsonify({"aviones": [c.resumen() for c in CABINAS.values()]})
+
+
+def texto_obligatorio(data, campo, nombre, maximo=60):
+    valor = " ".join(str(data.get(campo) or "").split())
+    if len(valor) < 2:
+        return None, f"{nombre} es obligatorio"
+    if len(valor) > maximo:
+        return None, f"{nombre} admite máximo {maximo} caracteres"
+    return valor, None
+
+
+def leer_fecha_hora(data, campo, nombre):
+    try:
+        return datetime.fromisoformat(str(data.get(campo) or "")).replace(second=0, microsecond=0, tzinfo=None), None
+    except ValueError:
+        return None, f"{nombre} es obligatoria (formato YYYY-MM-DDTHH:MM)"
+
+
+@app.post("/api/vuelos")
+def crear_vuelo():
+    """[Administración] Crear un vuelo (el gateway lo expone en /api/admin/vuelos con X-Admin-Key)
+    ---
+    tags: [Interno]
+    security: [{ServiceKey: []}]
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required: [origen, destino, aerolinea, avion, fecha_salida, fecha_llegada, precio]
+          properties:
+            origen: {type: string, example: Quito}
+            destino: {type: string, example: Cuenca}
+            aerolinea: {type: string, example: LATAM}
+            avion: {type: string, example: Airbus A320}
+            fecha_salida: {type: string, example: "2026-12-01T08:30"}
+            fecha_llegada: {type: string, example: "2026-12-01T09:20"}
+            precio: {type: number, example: 85.5, description: Precio base (Economy)}
+    responses:
+      201: {description: Vuelo creado con la cabina del avión elegido}
+      400: {description: Datos inválidos (detalle por campo)}
+      403: {description: Falta la clave de servicio}
+    """
+    requerir_clave_servicio()
+    data = leer_json(request)
+    errores = {}
+    origen, errores["origen"] = texto_obligatorio(data, "origen", "El origen")
+    destino, errores["destino"] = texto_obligatorio(data, "destino", "El destino")
+    aerolinea, errores["aerolinea"] = texto_obligatorio(data, "aerolinea", "La aerolínea")
+    salida, errores["fecha_salida"] = leer_fecha_hora(data, "fecha_salida", "La fecha de salida")
+    llegada, errores["fecha_llegada"] = leer_fecha_hora(data, "fecha_llegada", "La fecha de llegada")
+    avion = data.get("avion")
+    if avion not in CABINAS:
+        errores["avion"] = f"Avión no válido. Opciones: {', '.join(CABINAS)}"
+    try:
+        precio = round(float(data.get("precio")), 2)
+        if not 1 <= precio <= 10000:
+            errores["precio"] = "El precio debe estar entre 1 y 10000"
+    except (TypeError, ValueError):
+        errores["precio"] = "El precio es obligatorio y debe ser un número"
+    if origen and destino and origen.casefold() == destino.casefold():
+        errores["destino"] = "El destino debe ser distinto del origen"
+    if salida and salida <= config.ahora():
+        errores["fecha_salida"] = "La salida debe ser una fecha y hora futura"
+    if salida and llegada and not timedelta(minutes=20) <= llegada - salida <= timedelta(hours=20):
+        errores["fecha_llegada"] = "La llegada debe ser entre 20 minutos y 20 horas después de la salida"
+    errores = {k: v for k, v in errores.items() if v}
+    if errores:
+        raise ErrorApi("Datos del vuelo inválidos", 400, errores)
+
+    cab = CABINAS[avion]
+    prefijo = ("".join(c for c in aerolinea.upper() if c.isalpha()) + "XX")[:2]
+    with engine.begin() as con:
+        vuelo_id = con.execute(text("""
+            INSERT INTO vuelos.vuelos (codigo, aerolinea, avion, origen, destino, fecha_salida, fecha_llegada,
+                                       precio, asientos_totales, asientos_disponibles)
+            VALUES (:codigo, :aerolinea, :avion, :origen, :destino, :salida, :llegada, :precio, :total, :total)
+            RETURNING id
+        """), {"codigo": f"TMP-{uuid.uuid4().hex[:12]}", "aerolinea": aerolinea, "avion": avion,
+               "origen": origen.title(), "destino": destino.title(), "salida": salida, "llegada": llegada,
+               "precio": precio, "total": cab.total}).scalar()
+        # Código definitivo a partir del id: único y fácil de leer (p. ej. LA0412)
+        con.execute(text("UPDATE vuelos.vuelos SET codigo = :c WHERE id = :id"),
+                    {"c": f"{prefijo}{vuelo_id:04d}", "id": vuelo_id})
+        fila = buscar_vuelo(con, vuelo_id)
+    return jsonify({"mensaje": f"Vuelo {fila.codigo} creado con {cab.total} asientos ({cab.avion})",
+                    "vuelo": vuelo_a_dict(fila), "cabina": cab.resumen()}), 201
 
 
 @app.get("/api/vuelos/<int:vuelo_id>")
@@ -209,6 +310,7 @@ def mapa_asientos(vuelo_id):
         """), {"id": vuelo_id}).all()
         ahora = con.execute(text("SELECT LOCALTIMESTAMP")).scalar()
 
+    cab = cabina(vuelo.avion)
     estados, mis_retenciones, mis_reservados = {}, [], {}
     for f in filas:
         propio = usuario is not None and f.usuario_id == usuario["id"]
@@ -226,8 +328,8 @@ def mapa_asientos(vuelo_id):
             estados[f.asiento] = f.estado
 
     clases = []
-    for c in CLASES:
-        asientos_clase = [a for a, clase in ASIENTOS.items() if clase == c["clase"]]
+    for c in cab.clases:
+        asientos_clase = [a for a, clase in cab.asientos.items() if clase == c["clase"]]
         conteo = lambda estado: sum(1 for a in asientos_clase if estados.get(a) == estado)  # noqa: E731
         clases.append({
             "clase": c["clase"], "nombre": c["nombre"], "filas": c["filas"], "grupos": c["grupos"],
@@ -240,7 +342,7 @@ def mapa_asientos(vuelo_id):
 
     return jsonify({
         "vuelo": vuelo_a_dict(vuelo),
-        "avion": AVION,
+        "avion": cab.avion,
         "retencion_minutos": config.RETENCION_MINUTOS,
         "clases": clases,
         "estados": estados,
@@ -266,10 +368,11 @@ def retener_asiento(vuelo_id, asiento):
       409: {description: El asiento ya fue tomado por otro usuario}
     """
     usuario = requerir_token()
-    asiento = validar_asiento(asiento)
     try:
         with engine.begin() as con:
             vuelo = buscar_vuelo(con, vuelo_id, bloquear=True)
+            cab = cabina(vuelo.avion)
+            asiento = validar_asiento(asiento, cab)
             if vuelo.fecha_salida <= config.ahora():
                 raise ErrorApi("El vuelo ya despegó", 400)
             # Las retenciones vencidas se liberan antes de intentar tomar el asiento
@@ -292,13 +395,13 @@ def retener_asiento(vuelo_id, asiento):
                 con.execute(text("""
                     INSERT INTO vuelos.asientos (vuelo_id, asiento, clase, estado, usuario_id, expira_en)
                     VALUES (:v, :a, :c, 'RETENIDO', :u, LOCALTIMESTAMP + make_interval(mins => :min))
-                """), {"v": vuelo_id, "a": asiento, "c": ASIENTOS[asiento], "u": usuario["id"],
+                """), {"v": vuelo_id, "a": asiento, "c": cab.asientos[asiento], "u": usuario["id"],
                        "min": config.RETENCION_MINUTOS})
     except IntegrityError:
         raise ErrorApi(f"El asiento {asiento} ya fue tomado por otro usuario", 409, {"asiento": asiento})
 
-    return jsonify({"mensaje": f"Asiento {asiento} seleccionado", "asiento": asiento, "clase": ASIENTOS[asiento],
-                    "precio": precio_asiento(vuelo.precio, asiento),
+    return jsonify({"mensaje": f"Asiento {asiento} seleccionado", "asiento": asiento, "clase": cab.asientos[asiento],
+                    "precio": cab.precio(vuelo.precio, asiento),
                     "segundos_restantes": config.RETENCION_MINUTOS * 60})
 
 
@@ -317,9 +420,8 @@ def soltar_asiento(vuelo_id, asiento):
       404: {description: El usuario no tenía ese asiento seleccionado}
     """
     usuario = requerir_token()
-    asiento = validar_asiento(asiento)
     with engine.begin() as con:
-        buscar_vuelo(con, vuelo_id, bloquear=True)
+        asiento = validar_asiento(asiento, cabina(buscar_vuelo(con, vuelo_id, bloquear=True).avion))
         borrados = con.execute(text("""
             DELETE FROM vuelos.asientos
             WHERE vuelo_id = :v AND asiento = :a AND estado = 'RETENIDO' AND usuario_id = :u
@@ -357,7 +459,6 @@ def confirmar_asientos(vuelo_id):
     """
     requerir_clave_servicio()
     data = leer_json(request)
-    asientos = validar_lista_asientos(data)
     usuario_id, reserva_id = data.get("usuario_id"), data.get("reserva_id")
     if not isinstance(usuario_id, int) or not isinstance(reserva_id, int):
         raise ErrorApi("usuario_id y reserva_id son obligatorios", 400)
@@ -366,6 +467,8 @@ def confirmar_asientos(vuelo_id):
     try:
         with engine.begin() as con:
             vuelo = buscar_vuelo(con, vuelo_id, bloquear=True)
+            cab = cabina(vuelo.avion)
+            asientos = validar_lista_asientos(data, cab)
             # FOR UPDATE bloquea las filas consultadas hasta terminar la transacción;
             # si un asiento libre lo toma otro usuario a la vez, la clave primaria rechaza el INSERT
             ocupados = con.execute(text(f"""
@@ -390,12 +493,12 @@ def confirmar_asientos(vuelo_id):
                     con.execute(text("""
                         INSERT INTO vuelos.asientos (vuelo_id, asiento, clase, estado, usuario_id, reserva_id)
                         VALUES (:v, :a, :c, 'OCUPADO', :u, :r)
-                    """), {**p, "c": ASIENTOS[asiento]})
+                    """), {**p, "c": cab.asientos[asiento]})
     except IntegrityError:
         raise ErrorApi("Otro usuario tomó uno de los asientos al mismo tiempo", 409)
 
     return jsonify({"mensaje": "Asientos confirmados", "vuelo": vuelo_a_dict(vuelo), "asientos": [
-        {"asiento": a, "clase": ASIENTOS[a], "precio": precio_asiento(vuelo.precio, a)} for a in asientos]})
+        {"asiento": a, "clase": cab.asientos[a], "precio": cab.precio(vuelo.precio, a)} for a in asientos]})
 
 
 @app.post("/api/vuelos/<int:vuelo_id>/asientos/liberar")
@@ -426,11 +529,11 @@ def liberar_asientos(vuelo_id):
     sql = "DELETE FROM vuelos.asientos WHERE vuelo_id = :v AND reserva_id = :r AND estado = 'OCUPADO'"
     parametros = {"v": vuelo_id, "r": data["reserva_id"]}
     sentencia = text(sql)
-    if data.get("asientos"):
-        parametros["asientos"] = validar_lista_asientos(data)
-        sentencia = text(sql + " AND asiento IN :asientos").bindparams(bindparam("asientos", expanding=True))
     with engine.begin() as con:
-        buscar_vuelo(con, vuelo_id, bloquear=True)
+        vuelo = buscar_vuelo(con, vuelo_id, bloquear=True)
+        if data.get("asientos"):
+            parametros["asientos"] = validar_lista_asientos(data, cabina(vuelo.avion))
+            sentencia = text(sql + " AND asiento IN :asientos").bindparams(bindparam("asientos", expanding=True))
         liberados = con.execute(sentencia, parametros).rowcount
     return jsonify({"mensaje": "Asientos liberados", "liberados": liberados})
 

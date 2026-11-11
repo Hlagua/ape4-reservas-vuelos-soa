@@ -152,4 +152,11 @@ class Api {
   /// accion: 'detener' o 'iniciar'.
   Future<Map<String, dynamic>> adminControlar(String clave, String servicio, String accion) =>
       _pedir('POST', '/api/admin/servicios/$servicio/$accion', cabecerasExtra: {'X-Admin-Key': clave});
+
+  /// Tipos de avión con su número de asientos por clase.
+  Future<Map<String, dynamic>> aviones() => _pedir('GET', '/api/vuelos/aviones');
+
+  /// Crea un vuelo: origen, destino, aerolinea, avion, fecha_salida, fecha_llegada (YYYY-MM-DDTHH:MM) y precio.
+  Future<Map<String, dynamic>> adminCrearVuelo(String clave, Map<String, Object> datos) =>
+      _pedir('POST', '/api/admin/vuelos', cuerpo: datos, cabecerasExtra: {'X-Admin-Key': clave});
 }

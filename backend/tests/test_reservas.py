@@ -125,6 +125,40 @@ def test_no_se_modifica_ni_cancela_un_vuelo_que_ya_despego(base, usuario, vuelo_
     assert en_lista()["despegado"] is True  # la app oculta Modificar y Cancelar
 
 
+
+def test_cambio_de_clase_cobra_solo_la_diferencia_o_la_devuelve(base, usuario, vuelo_prueba):
+    h = usuario["headers"]
+    precio = {c["clase"]: c["precio"] for c in requests.get(f"{base}/api/vuelos/{vuelo_prueba}/asientos").json()["clases"]}
+    iva = lambda v: round(v * 1.15, 2)  # noqa: E731
+    juan, ana = pasajero("38A", "Juan Perez"), pasajero("38C", "Ana Ruiz")
+    reserva = reservar(base, usuario, vuelo_prueba, [juan, ana]).json()["reserva"]
+    pagado = reserva["total"]
+    assert pagado == round(2 * precio["ECONOMY"], 2)
+
+    # Juan pasa de Economy a Business: se cobra solo la diferencia, no la reserva completa
+    juan_b = {**juan, "asiento": "5C"}
+    resp = requests.put(f"{base}/api/reservas/{reserva['id']}", headers=h, json={"pasajeros": [juan_b, ana]})
+    assert resp.status_code == 200, resp.text
+    ajuste = resp.json()["ajuste"]
+    sube = round(precio["BUSINESS"] - precio["ECONOMY"], 2)
+    assert ajuste["tipo"] == "COBRO" and ajuste["diferencia"] == sube
+    assert ajuste["total_anterior"] == pagado and ajuste["total_nuevo"] == round(pagado + sube, 2)
+    assert ajuste["diferencia_con_iva"] == round(iva(pagado + sube) - iva(pagado), 2)
+
+    # Solo cambia un nombre: el precio no cambia
+    resp = requests.put(f"{base}/api/reservas/{reserva['id']}", headers=h,
+                        json={"pasajeros": [{**juan_b, "nombre": "Juan Pablo Perez"}, ana]})
+    assert resp.json()["ajuste"]["tipo"] == "SIN_CAMBIO" and resp.json()["ajuste"]["diferencia"] == 0
+
+    # Vuelve a Economy: se le devuelve la diferencia
+    resp = requests.put(f"{base}/api/reservas/{reserva['id']}", headers=h, json={"pasajeros": [juan, ana]})
+    ajuste = resp.json()["ajuste"]
+    assert ajuste["tipo"] == "DEVOLUCION" and ajuste["diferencia"] == -sube and ajuste["total_nuevo"] == pagado
+
+    # Los ajustes quedan registrados en la reserva
+    ajustes = requests.get(f"{base}/api/reservas/{reserva['id']}", headers=h).json()["reserva"]["ajustes"]
+    assert [a["tipo"] for a in ajustes] == ["COBRO", "DEVOLUCION"]
+
 @solo_local
 def test_servicio_vuelos_caido_responde_503(usuario, vuelo_prueba):
     """Interoperabilidad: si Vuelos no responde, Reservas devuelve 503 controlado."""

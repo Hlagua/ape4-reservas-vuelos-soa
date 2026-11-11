@@ -5,6 +5,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'pantallas/acceso.dart';
 import 'pantallas/administracion.dart';
+import 'pantallas/crear_vuelo.dart';
 import 'pantallas/estado.dart';
 import 'pantallas/perfil.dart';
 import 'pantallas/reservas.dart';
@@ -55,6 +56,7 @@ class _InicioState extends State<Inicio> {
   final _perfil = GlobalKey<PantallaPerfilState>();
   final _estado = GlobalKey<PantallaEstadoState>();
   final _admin = GlobalKey<PantallaAdministracionState>();
+  final _crearVuelo = GlobalKey<PantallaCrearVueloState>();
 
   @override
   void initState() {
@@ -98,6 +100,7 @@ class _InicioState extends State<Inicio> {
         ),
       ],
       if (sesion.esAdmin) ...[
+        _Vista(Icons.add_circle, 'Crear vuelos', PantallaCrearVuelo(key: _crearVuelo, sesion: sesion)),
         _Vista(
           Icons.monitor_heart,
           'Estado',

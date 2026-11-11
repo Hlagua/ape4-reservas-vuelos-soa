@@ -149,7 +149,8 @@ class _PantallaAsientosState extends State<PantallaAsientos> {
         _actualizado = 'Actualizado ${t.format(context)} · se actualiza cada ${_intervaloActualizacion.inSeconds} s';
         _sincronizarPasajeros();
       });
-      if (vencidos.isNotEmpty) {
+      // Mientras se guarda, los asientos retenidos pasan a OCUPADO: no es que hayan expirado
+      if (vencidos.isNotEmpty && !_enviando) {
         avisar(context, 'Su selección de ${vencidos.join(', ')} expiró y fue liberada', TipoAviso.error);
       }
     } on ApiError catch (e) {
@@ -188,6 +189,23 @@ class _PantallaAsientosState extends State<PantallaAsientos> {
   bool get _hayCambios {
     if (widget.edicion == null || _datos == null) return false;
     return !setEquals(_huella(_seleccion), _original);
+  }
+
+  /// En edición: precio que ya se pagó por cada asiento de la reserva (se conserva si el asiento se mantiene).
+  Map<String, double> get _pagado => {
+        for (final p in widget.edicion?.pasajeros ?? const [])
+          p['asiento'] as String: (p['precio'] as num).toDouble()
+      };
+
+  /// Precio de un asiento: el ya pagado si es de la reserva, o el de su clase si es nuevo.
+  double _precioDe(String asiento) => _pagado[asiento] ?? _precioClase[_claseDe[asiento]] ?? 0;
+
+  /// Totales con IVA antes y después de la modificación (solo en edición).
+  ({double anterior, double nuevo, double diferencia}) get _comparacion {
+    double conIva(double v) => (v * (1 + DesgloseIva.iva) * 100).roundToDouble() / 100;
+    final anterior = conIva(_pagado.values.fold(0.0, (s, v) => s + v));
+    final nuevo = conIva(_seleccion.fold(0.0, (s, a) => s + _precioDe(a)));
+    return (anterior: anterior, nuevo: nuevo, diferencia: ((nuevo - anterior) * 100).roundToDouble() / 100);
   }
 
   /// La flecha atrás pasa por _alSalir en edición o si hay asientos seleccionados sin reservar.
@@ -330,6 +348,18 @@ class _PantallaAsientosState extends State<PantallaAsientos> {
           'documento': _pasajeros[a]!.documento.text,
         }
     ];
+    if (widget.edicion != null) {
+      final c = _comparacion;
+      if (c.diferencia != 0) {
+        final ok = await confirmar(context,
+            titulo: c.diferencia > 0 ? 'Pagar la diferencia' : 'Devolución de la diferencia',
+            mensaje: 'Ya pagó ${dinero(c.anterior)} y el nuevo total es ${dinero(c.nuevo)} (IVA incluido).\n\n'
+                '${c.diferencia > 0 ? 'Solo pagará la diferencia de ${dinero(c.diferencia)}; no se le cobra de nuevo la reserva.' : 'Se le devolverán ${dinero(-c.diferencia)}.'}'
+                '\n\n¿Guardar los cambios?',
+            textoOk: c.diferencia > 0 ? 'Pagar ${dinero(c.diferencia)} y guardar' : 'Guardar cambios');
+        if (!ok || !mounted) return;
+      }
+    }
     setState(() => _enviando = true);
     try {
       final edicion = widget.edicion;
@@ -339,8 +369,10 @@ class _PantallaAsientosState extends State<PantallaAsientos> {
       _expiran.clear(); // ya no son retenciones: pasaron a OCUPADO
       if (!mounted) return;
       final reserva = r['reserva'] as Map<String, dynamic>;
+      final ajuste = r['ajuste'] as Map<String, dynamic>?;
       avisar(context,
-          '${r['mensaje']}: reserva #${reserva['id']}, asientos ${(reserva['asientos'] as List).join(', ')}, total ${dinero(reserva['total'] as num)}');
+          '${r['mensaje']}: reserva #${reserva['id']}, asientos ${(reserva['asientos'] as List).join(', ')}'
+          '${ajuste != null ? '. ${ajuste['mensaje']}' : ', total ${dinero(reserva['total'] as num)}'}');
       Navigator.pop(context, true);
     } on ApiError catch (e) {
       if (!mounted) return;
@@ -438,7 +470,7 @@ class _PantallaAsientosState extends State<PantallaAsientos> {
 
   Widget _panelSeleccion() {
     final seleccion = _seleccion;
-    final total = seleccion.fold<double>(0, (s, a) => s + (_precioClase[_claseDe[a]] ?? 0));
+    final total = seleccion.fold<double>(0, (s, a) => s + _precioDe(a));
     final edicion = widget.edicion != null;
     final restantes = _expiran.isEmpty
         ? null
@@ -471,6 +503,7 @@ class _PantallaAsientosState extends State<PantallaAsientos> {
           child: DesgloseIva(
               subtotal: total, etiqueta: '${seleccion.length} asiento${seleccion.length == 1 ? '' : 's'}'),
         ),
+      if (edicion && seleccion.isNotEmpty) _diferencia(),
       Row(children: [
         if (edicion || seleccion.isNotEmpty)
           Expanded(
@@ -490,6 +523,37 @@ class _PantallaAsientosState extends State<PantallaAsientos> {
         ],
       ]),
     ]);
+  }
+
+  /// En edición: lo ya pagado, el nuevo total y la diferencia (cobro solo del aumento o devolución).
+  Widget _diferencia() {
+    final c = _comparacion;
+    final (color, icono, texto) = c.diferencia > 0
+        ? (const Color(0xFFFFF4D6), Icons.add_card, 'Solo paga la diferencia: ${dinero(c.diferencia)}')
+        : c.diferencia < 0
+            ? (const Color(0xFFE3F4EA), Icons.currency_exchange, 'Se le devuelve: ${dinero(-c.diferencia)}')
+            : (const Color(0xFFEEF2F6), Icons.check, 'Sin diferencia de precio');
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(8)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          const Text('Ya pagado (con IVA)'),
+          Text(dinero(c.anterior)),
+        ]),
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          const Text('Nuevo total (con IVA)'),
+          Text(dinero(c.nuevo)),
+        ]),
+        const Divider(height: 12),
+        Row(children: [
+          Icon(icono, size: 18),
+          const SizedBox(width: 6),
+          Expanded(child: Text(texto, style: const TextStyle(fontWeight: FontWeight.bold))),
+        ]),
+      ]),
+    );
   }
 
   Widget _formPasajero(int indice, String asiento) {
