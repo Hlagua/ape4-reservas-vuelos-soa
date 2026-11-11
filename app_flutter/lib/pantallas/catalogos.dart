@@ -471,6 +471,7 @@ class _PantallaElegirCiudadState extends State<PantallaElegirCiudad> {
                 child: TextField(
                   controller: _pais,
                   textCapitalization: TextCapitalization.words,
+                  inputFormatters: [Filtro.formateador(Filtro.busqueda)], // solo letras, hasta 30
                   decoration: const InputDecoration(
                     labelText: 'País (opcional)',
                     hintText: 'Ecuador',
@@ -486,6 +487,7 @@ class _PantallaElegirCiudadState extends State<PantallaElegirCiudad> {
                   controller: _ciudad,
                   autofocus: !editando,
                   textCapitalization: TextCapitalization.words,
+                  inputFormatters: [Filtro.formateador(Filtro.busqueda)], // solo letras, hasta 30
                   decoration: InputDecoration(
                     labelText: 'Buscar ciudad',
                     hintText: 'Esmeraldas, Lima, París…',
@@ -725,8 +727,10 @@ class _DialogoAerolineaState extends State<_DialogoAerolinea> {
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             TextFormField(
               controller: _nombre,
-              maxLength: 60,
+              maxLength: maxNombreCatalogo,
               autofocus: true,
+              textCapitalization: TextCapitalization.words,
+              inputFormatters: [Filtro.formateador(Filtro.nombreAerolinea)],
               decoration: InputDecoration(labelText: 'Nombre', counterText: '', errorText: _errores['nombre']),
               validator: (v) => (v ?? '').trim().length < 2 ? 'Escriba el nombre de la aerolínea' : null,
             ),
@@ -935,7 +939,8 @@ class _PantallaEditorAvionState extends State<PantallaEditorAvion> {
                     width: 360,
                     child: TextFormField(
                       controller: _nombre,
-                      maxLength: 60,
+                      maxLength: maxNombreCatalogo,
+                      inputFormatters: [Filtro.formateador(Filtro.nombreAvion)],
                       decoration: InputDecoration(
                           labelText: 'Nombre del avión',
                           hintText: 'Airbus A321neo',

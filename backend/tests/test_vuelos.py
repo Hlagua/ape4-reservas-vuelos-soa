@@ -329,3 +329,19 @@ def test_buscador_y_mapa_de_ciudades_del_mundo(base, admin):
         assert (resp.json()["ciudad"], resp.json()["pais"]) == ("Quito", "Ecuador")
     resp = requests.get(f"{base}/api/vuelos/ciudades/en-mapa", params={"latitud": 0, "longitud": -30}, headers=h)
     assert resp.status_code in (404, 503)  # océano Atlántico
+
+
+def test_validacion_de_ingreso_de_datos(base, admin):
+    """Buscadores: solo letras y hasta 30 caracteres; nombres de aerolínea/avión sin símbolos raros."""
+    h = admin["headers"]
+    buscar = f"{base}/api/vuelos/ciudades/buscar"
+    assert requests.get(buscar, params={"q": "Quito123"}, headers=h).status_code == 400  # números
+    assert requests.get(buscar, params={"q": "a" * 31}, headers=h).status_code == 400  # más de 30
+    assert requests.get(buscar, params={"q": "Quito", "pais": "Ecuad0r"}, headers=h).status_code == 400
+    assert requests.get(buscar, params={"q": "Quito<script>"}, headers=h).status_code == 400
+    assert requests.get(f"{base}/api/vuelos", params={"origen": "Quito1"}).status_code == 400
+    assert requests.get(f"{base}/api/vuelos", params={"origen": "Quito"}).status_code == 200
+    resp = requests.post(f"{base}/api/vuelos/aerolineas", json={"nombre": "Aero<b>", "codigo": "ZZ"}, headers=h)
+    assert resp.status_code == 400 and "nombre" in resp.json()["detalle"]
+    resp = requests.post(f"{base}/api/vuelos/aviones", json={"nombre": "Avion$$", "clases": []}, headers=h)
+    assert resp.status_code == 400

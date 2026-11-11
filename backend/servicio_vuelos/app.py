@@ -126,12 +126,13 @@ def buscar_vuelos():
     """
     condiciones = ["fecha_salida > LOCALTIMESTAMP"]
     parametros = {}
-    if request.args.get("origen"):
-        condiciones.append("origen = :origen")
-        parametros["origen"] = request.args["origen"].strip()
-    if request.args.get("destino"):
-        condiciones.append("destino = :destino")
-        parametros["destino"] = request.args["destino"].strip()
+    for campo in ("origen", "destino"):
+        if request.args.get(campo):
+            valor = " ".join(request.args[campo].split())
+            if len(valor) > 60 or not all(c.isalpha() or c in SIMBOLOS_NOMBRE for c in valor):
+                raise ErrorApi(f"La ciudad de {campo} solo admite letras (máximo 60 caracteres)", 400)
+            condiciones.append(f"{campo} = :{campo}")
+            parametros[campo] = valor
     if request.args.get("fecha"):
         try:
             parametros["fecha"] = datetime.strptime(request.args["fecha"], "%Y-%m-%d").date()
@@ -256,13 +257,31 @@ def listar_aviones():
 SIMBOLOS_NOMBRE = " .'-’()"
 
 
+SIMBOLOS_MODELO = SIMBOLOS_NOMBRE + "&/"  # nombres de aerolínea o avión: también números (Airbus A320)
+MAX_BUSQUEDA = 30
+
+
 def nombre_catalogo(data, campo, etiqueta, letras_solo=True):
     valor = " ".join(str(data.get(campo) or "").split())
     if not 2 <= len(valor) <= 60:
         raise ErrorApi("Datos inválidos", 400, {campo: f"{etiqueta} debe tener entre 2 y 60 caracteres"})
     if letras_solo and not all(c.isalpha() or c in SIMBOLOS_NOMBRE for c in valor):
         raise ErrorApi("Datos inválidos", 400, {campo: f"{etiqueta} solo admite letras y espacios"})
+    if not letras_solo and not all(c.isalnum() or c in SIMBOLOS_MODELO for c in valor):
+        raise ErrorApi("Datos inválidos", 400, {campo: f"{etiqueta} solo admite letras, números, espacios y . - & / ( )"})
     return valor
+
+
+def texto_de_busqueda(valor, campo, minimo=0):
+    """Texto de un buscador de lugares: solo letras (sin números) y hasta 30 caracteres."""
+    texto = " ".join(str(valor or "").split())
+    if len(texto) > MAX_BUSQUEDA:
+        raise ErrorApi("Datos inválidos", 400, {campo: f"Máximo {MAX_BUSQUEDA} caracteres"})
+    if texto and not all(c.isalpha() or c in SIMBOLOS_NOMBRE for c in texto):
+        raise ErrorApi("Datos inválidos", 400, {campo: "Solo se admiten letras (sin números ni símbolos)"})
+    if len(texto) < minimo:
+        raise ErrorApi("Escriba al menos 2 letras", 400)
+    return texto
 
 
 def ya_existe(tabla, nombre):
@@ -441,15 +460,13 @@ def buscar_ciudades_del_mundo():
       - {in: query, name: pais, type: string, example: Ecuador, description: "País (opcional, filtra)"}
     responses:
       200: {description: "Lista de {ciudad, pais, region, latitud, longitud, lugar}; primero las de Ecuador"}
-      400: {description: Texto muy corto}
+      400: {description: "Texto muy corto, más de 30 caracteres o con números"}
       403: {description: Solo el administrador}
       503: {description: El servicio de mapas no respondió}
     """
     requerir_admin()
-    texto = " ".join(str(request.args.get("q") or "").split())
-    if len(texto) < 2:
-        raise ErrorApi("Escriba al menos 2 letras", 400)
-    pais = " ".join(str(request.args.get("pais") or "").split())
+    texto = texto_de_busqueda(request.args.get("q"), "q", minimo=2)
+    pais = texto_de_busqueda(request.args.get("pais"), "pais")
     ciudades, vistas = [], set()
     for c in buscar_en_mundo(texto, pais):
         clave = (_simple(c["ciudad"]), _simple(c["pais"]), _simple(c["region"] or ""))

@@ -4,6 +4,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'validaciones.dart';
+
 const _maxSugerencias = 5;
 
 String _normalizar(String texto) {
@@ -70,6 +72,7 @@ class CampoBuscador extends StatefulWidget {
     this.validar,
     this.excluir,
     this.icono = Icons.search,
+    this.filtro = Filtro.busqueda,
   });
 
   final String etiqueta;
@@ -85,6 +88,9 @@ class CampoBuscador extends StatefulWidget {
   /// Valor que no se puede elegir (p. ej. el destino igual al origen).
   final String? excluir;
   final IconData icono;
+
+  /// Qué se puede escribir: por defecto solo letras, sin números y hasta 30 caracteres.
+  final String Function(String) filtro;
 
   @override
   State<CampoBuscador> createState() => _CampoBuscadorState();
@@ -155,6 +161,7 @@ class _CampoBuscadorState extends State<CampoBuscador> {
       fieldViewBuilder: (context, controlador, foco, alEnviar) => TextFormField(
         controller: controlador,
         focusNode: foco,
+        inputFormatters: [Filtro.formateador(widget.filtro)],
         decoration: InputDecoration(
           labelText: widget.etiqueta,
           hintText: widget.textoVacio ?? 'Buscar...',

@@ -243,6 +243,7 @@ class PantallaCrearVueloState extends State<PantallaCrearVuelo> {
     String? Function(String?)? validar,
     String? excluir,
     IconData icono = Icons.search,
+    String Function(String) filtro = Filtro.busqueda,
   }) {
     // Buscador: al escribir se muestran las 5 opciones más parecidas (no se despliega toda la lista)
     return SizedBox(
@@ -251,6 +252,7 @@ class PantallaCrearVueloState extends State<PantallaCrearVuelo> {
         key: ValueKey('$campo-$_version'),
         etiqueta: etiqueta,
         icono: icono,
+        filtro: filtro,
         opciones: opciones,
         valor: valor,
         excluir: excluir,
@@ -327,6 +329,7 @@ class PantallaCrearVueloState extends State<PantallaCrearVuelo> {
                       opciones: [
                         for (final a in _aviones) (a['avion'] as String, '${a['avion']} · ${a['total_asientos']} asientos')
                       ],
+                      filtro: Filtro.busquedaAlfanumerica, // los modelos llevan números (A320, 737)
                       alCambiar: (v) => _avion = v,
                     ),
                   ]),

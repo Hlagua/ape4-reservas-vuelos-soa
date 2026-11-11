@@ -6,6 +6,9 @@ const int maxEmail = 50;
 const int minPassword = 8;
 const int maxPassword = 64;
 const int maxAsientos = 5;
+const int maxBusqueda = 30; // buscadores (ciudades, país, aerolíneas, aviones)
+const int maxNombreCatalogo = 40; // nombre de aerolínea o de avión
+const int maxUrl = 100;
 
 const String _letras = 'A-Za-zÁÉÍÓÚÜÑáéíóúüñ';
 final RegExp _nombreRe = RegExp('^[$_letras]+( [$_letras]+)*\$');
@@ -82,6 +85,28 @@ class Filtro {
   static String cedula(String v) => _cortar(v.replaceAll(RegExp(r'\D'), ''), 10);
 
   static String pasaporte(String v) => _cortar(v.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), ''), 9);
+
+  /// Buscador de lugares (ciudad, país) o aerolíneas: solo letras de cualquier idioma, espacios y . ' - ( ),
+  /// sin números y hasta 30 caracteres.
+  static String busqueda(String v) => _limpiar(v, RegExp(r"[^\p{L} .'’\-()]", unicode: true), maxBusqueda);
+
+  /// Buscador de aviones: letras y números (Airbus A320, Boeing 737-800), hasta 30 caracteres.
+  static String busquedaAlfanumerica(String v) =>
+      _limpiar(v, RegExp(r"[^\p{L}0-9 .\-/()]", unicode: true), maxBusqueda);
+
+  /// Nombre de aerolínea: letras, números, espacios y . ' - & ( ), hasta 40 caracteres.
+  static String nombreAerolinea(String v) =>
+      _limpiar(v, RegExp(r"[^\p{L}0-9 .'’\-&()]", unicode: true), maxNombreCatalogo);
+
+  /// Nombre de avión: letras, números, espacios y . - / ( ), hasta 40 caracteres.
+  static String nombreAvion(String v) => _limpiar(v, RegExp(r"[^\p{L}0-9 .\-/()]", unicode: true), maxNombreCatalogo);
+
+  /// Dirección web: sin espacios, hasta 100 caracteres.
+  static String url(String v) => _cortar(v.replaceAll(RegExp(r'\s'), ''), maxUrl);
+
+  /// Quita los caracteres no permitidos, los espacios al inicio y los espacios dobles, y corta al máximo.
+  static String _limpiar(String v, RegExp noPermitidos, int max) => _cortar(
+      v.replaceAll(noPermitidos, '').replaceFirst(RegExp(r'^ +'), '').replaceAll(RegExp(r' {2,}'), ' '), max);
 
   static String _cortar(String v, int max) => v.length > max ? v.substring(0, max) : v;
 

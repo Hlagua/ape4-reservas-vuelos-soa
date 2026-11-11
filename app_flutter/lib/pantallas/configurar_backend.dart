@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 
 import '../servicios/sesion.dart';
+import '../utils/validaciones.dart';
 
 String? validarUrl(String? v) {
   final uri = Uri.tryParse((v ?? '').trim());
@@ -25,6 +26,8 @@ Future<bool> cambiarBackend(BuildContext context, Sesion sesion) async {
           controller: control,
           keyboardType: TextInputType.url,
           autocorrect: false,
+          maxLength: maxUrl,
+          inputFormatters: [Filtro.formateador(Filtro.url)],
           decoration: const InputDecoration(labelText: 'API Gateway', hintText: 'http://192.168.1.20:5000'),
           validator: validarUrl,
         ),
