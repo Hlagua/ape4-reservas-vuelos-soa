@@ -144,19 +144,21 @@ class Api {
 
   Future<Map<String, dynamic>> salud() => _pedir('GET', '/api/salud');
 
-  // ---------- Administración (pruebas de tolerancia a fallos, requiere ADMIN_KEY) ----------
+  // ---------- Catálogos y vuelos (crear: solo el usuario con rol ADMIN) ----------
 
-  Future<Map<String, dynamic>> adminServicios(String clave) =>
-      _pedir('GET', '/api/admin/servicios', cabecerasExtra: {'X-Admin-Key': clave});
+  /// Ciudades (con coordenadas), aerolíneas y aviones registrados.
+  Future<Map<String, dynamic>> catalogos() => _pedir('GET', '/api/vuelos/catalogos');
 
-  /// accion: 'detener' o 'iniciar'.
-  Future<Map<String, dynamic>> adminControlar(String clave, String servicio, String accion) =>
-      _pedir('POST', '/api/admin/servicios/$servicio/$accion', cabecerasExtra: {'X-Admin-Key': clave});
+  Future<Map<String, dynamic>> crearCiudad(String nombre, {double? latitud, double? longitud}) =>
+      _pedir('POST', '/api/vuelos/ciudades', cuerpo: {'nombre': nombre, 'latitud': latitud, 'longitud': longitud});
 
-  /// Tipos de avión con su número de asientos por clase.
-  Future<Map<String, dynamic>> aviones() => _pedir('GET', '/api/vuelos/aviones');
+  Future<Map<String, dynamic>> crearAerolinea(String nombre, String codigo) =>
+      _pedir('POST', '/api/vuelos/aerolineas', cuerpo: {'nombre': nombre, 'codigo': codigo});
 
-  /// Crea un vuelo: origen, destino, aerolinea, avion, fecha_salida, fecha_llegada (YYYY-MM-DDTHH:MM) y precio.
-  Future<Map<String, dynamic>> adminCrearVuelo(String clave, Map<String, Object> datos) =>
-      _pedir('POST', '/api/admin/vuelos', cuerpo: datos, cabecerasExtra: {'X-Admin-Key': clave});
+  /// clases: [{clase, filas, configuracion: '3-3'}]
+  Future<Map<String, dynamic>> crearAvion(String nombre, List<Map<String, Object>> clases) =>
+      _pedir('POST', '/api/vuelos/aviones', cuerpo: {'nombre': nombre, 'clases': clases});
+
+  /// origen, destino, aerolinea, avion, fecha_salida, fecha_llegada (YYYY-MM-DDTHH:MM) y precio.
+  Future<Map<String, dynamic>> crearVuelo(Map<String, Object> datos) => _pedir('POST', '/api/vuelos', cuerpo: datos);
 }

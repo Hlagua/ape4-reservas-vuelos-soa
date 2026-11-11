@@ -11,7 +11,7 @@ from sqlalchemy import text
 
 from common import config
 from common.app_base import crear_app
-from common.clientes import llamar_servicio, requerir_token
+from common.clientes import llamar_servicio, no_admin, requerir_token
 from common.db import engine
 from common.errores import ErrorApi, leer_json
 from common.validaciones import validar_documento, validar_nombre
@@ -216,7 +216,7 @@ def crear_reserva():
       409: {description: Algún asiento ya fue tomado por otro usuario}
       503: {description: Un servicio requerido no está disponible}
     """
-    usuario = requerir_token()
+    usuario = no_admin(requerir_token(), "comprar ni reservar asientos")
     data = leer_json(request)
     try:
         vuelo_id = int(data.get("vuelo_id"))
@@ -421,7 +421,7 @@ def modificar_reserva(reserva_id):
       404: {description: Reserva no encontrada}
       409: {description: Algún asiento nuevo ya fue tomado}
     """
-    usuario = requerir_token()
+    usuario = no_admin(requerir_token(), "modificar reservas")
     pasajeros = leer_pasajeros(leer_json(request))
     with engine.connect() as con:
         actual = obtener_reserva_propia(con, reserva_id, usuario)
@@ -483,7 +483,7 @@ def cancelar_reserva(reserva_id):
       403: {description: La reserva pertenece a otro usuario}
       404: {description: Reserva no encontrada}
     """
-    usuario = requerir_token()
+    usuario = no_admin(requerir_token(), "cancelar reservas")
     with engine.begin() as con:
         actual = obtener_reserva_propia(con, reserva_id, usuario)
         if actual.estado == "CONFIRMADA":

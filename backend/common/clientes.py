@@ -33,7 +33,7 @@ def llamar_servicio(metodo, url, interno=False, **kwargs):
 def requerir_token():
     """Valida el token Bearer consultando al servicio de Autenticación.
 
-    Devuelve los datos del usuario autenticado: {id, nombre, email}.
+    Devuelve los datos del usuario autenticado: {id, nombre, email, rol}.
     """
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
@@ -47,6 +47,21 @@ def requerir_token():
         cuerpo = resp.json() if resp.headers.get("Content-Type", "").startswith("application/json") else {}
         raise ErrorApi(cuerpo.get("error", "Servicio de autenticación no disponible"), 503, cuerpo.get("detalle"))
     return resp.json()["usuario"]
+
+
+def requerir_admin():
+    """Valida el token y exige el rol ADMIN (usuario administrador que ingresó con email y contraseña)."""
+    usuario = requerir_token()
+    if usuario.get("rol") != "ADMIN":
+        raise ErrorApi("Solo el administrador puede realizar esta acción", 403)
+    return usuario
+
+
+def no_admin(usuario, accion):
+    """El administrador solo consulta vuelos y asientos: no compra ni reserva."""
+    if usuario.get("rol") == "ADMIN":
+        raise ErrorApi(f"El administrador no puede {accion}", 403)
+    return usuario
 
 
 def usuario_opcional():

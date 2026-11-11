@@ -7,6 +7,8 @@ Es el único dueño del esquema `vuelos`. Control de concurrencia de asientos:
   - La clave primaria (vuelo_id, asiento) impide que dos usuarios tengan el mismo
     asiento: si dos clientes lo intentan a la vez, SQL Server acepta solo a uno.
 """
+import json
+import threading
 import uuid
 from datetime import datetime, timedelta
 
@@ -16,10 +18,10 @@ from sqlalchemy.exc import IntegrityError
 
 from common import config
 from common.app_base import crear_app
-from common.clientes import requerir_clave_servicio, requerir_token, usuario_opcional
+from common.clientes import no_admin, requerir_admin, requerir_clave_servicio, requerir_token, usuario_opcional
 from common.db import engine
 from common.errores import ErrorApi, leer_json
-from servicio_vuelos.cabina import CABINAS, cabina
+from servicio_vuelos.cabina import AVION_PREDETERMINADO, CABINAS as CABINAS_BASE, construir_clases, crear_cabina
 
 app = crear_app(__name__, "Vuelos", "Consulta de vuelos, mapa de asientos y control de asientos", usa_bd=True)
 
@@ -168,16 +170,224 @@ def listar_ciudades():
     return jsonify({"origenes": origenes, "destinos": destinos})
 
 
+# ---------- Catálogos: ciudades, aerolíneas y aviones (los crea el administrador) ----------
+
+_cabinas = {}
+_candado = threading.Lock()
+
+
+def cargar_cabinas():
+    """Lee los aviones de la base (tabla vuelos.aviones) y arma la cabina de cada uno."""
+    with engine.connect() as con:
+        filas = con.execute(text("SELECT nombre, clases FROM vuelos.aviones ORDER BY total_asientos DESC")).all()
+    nuevas = {f.nombre: crear_cabina(f.nombre, f.clases) for f in filas}
+    with _candado:
+        _cabinas.clear()
+        _cabinas.update(nuevas)
+    return nuevas
+
+
+def cabina(avion):
+    """Cabina del avión del vuelo. Un avión desconocido usa la cabina predeterminada (A340-600)."""
+    cab = _cabinas.get(avion) or cargar_cabinas().get(avion)
+    return cab or CABINAS_BASE.get(avion) or CABINAS_BASE[AVION_PREDETERMINADO]
+
+
+def catalogo_ciudades(con):
+    return con.execute(text("SELECT nombre FROM vuelos.ciudades ORDER BY nombre")).scalars().all()
+
+
+def catalogo_aerolineas(con):
+    return [{"nombre": f.nombre, "codigo": f.codigo} for f in con.execute(text(
+        "SELECT nombre, codigo FROM vuelos.aerolineas ORDER BY nombre"))]
+
+
+@app.get("/api/vuelos/catalogos")
+def listar_catalogos():
+    """Ciudades (con coordenadas para el mapa), aerolíneas y aviones registrados
+    ---
+    tags: [Catálogos]
+    responses:
+      200: {description: Catálogos}
+    """
+    with engine.connect() as con:
+        ciudades, aerolineas = catalogo_ciudades(con), catalogo_aerolineas(con)
+        coordenadas = {f.nombre: [float(f.latitud), float(f.longitud)] for f in con.execute(text(
+            "SELECT nombre, latitud, longitud FROM vuelos.ciudades WHERE latitud IS NOT NULL AND longitud IS NOT NULL"))}
+    return jsonify({"ciudades": ciudades, "coordenadas": coordenadas, "aerolineas": aerolineas,
+                    "aviones": [c.resumen() for c in cargar_cabinas().values()]})
+
+
 @app.get("/api/vuelos/aviones")
 def listar_aviones():
     """Tipos de avión con su número de asientos por clase
     ---
-    tags: [Vuelos]
+    tags: [Catálogos]
     responses:
       200: {description: Aviones disponibles para crear vuelos}
     """
-    return jsonify({"aviones": [c.resumen() for c in CABINAS.values()]})
+    return jsonify({"aviones": [c.resumen() for c in cargar_cabinas().values()]})
 
+
+SIMBOLOS_NOMBRE = " .'-"
+
+
+def nombre_catalogo(data, campo, etiqueta, letras_solo=True):
+    valor = " ".join(str(data.get(campo) or "").split())
+    if not 2 <= len(valor) <= 60:
+        raise ErrorApi("Datos inválidos", 400, {campo: f"{etiqueta} debe tener entre 2 y 60 caracteres"})
+    if letras_solo and not all(c.isalpha() or c in SIMBOLOS_NOMBRE for c in valor):
+        raise ErrorApi("Datos inválidos", 400, {campo: f"{etiqueta} solo admite letras y espacios"})
+    return valor
+
+
+def ya_existe(tabla, nombre):
+    with engine.connect() as con:
+        return con.execute(text(f"SELECT 1 FROM vuelos.{tabla} WHERE lower(nombre) = lower(:n)"), {"n": nombre}).first()
+
+
+def insertar_unico(sql, parametros, mensaje_repetido, campo):
+    try:
+        with engine.begin() as con:
+            con.execute(text(sql), parametros)
+    except IntegrityError:
+        raise ErrorApi(mensaje_repetido, 409, {campo: mensaje_repetido})
+
+
+@app.post("/api/vuelos/ciudades")
+def crear_ciudad():
+    """[Administrador] Registrar una ciudad (sirve como origen y como destino)
+    ---
+    tags: [Catálogos]
+    security: [{Bearer: []}]
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required: [nombre]
+          properties:
+            nombre: {type: string, example: Esmeraldas}
+            latitud: {type: number, example: 0.9592, description: "Opcional, para el mapa (-90 a 90)"}
+            longitud: {type: number, example: -79.6539, description: "Opcional, para el mapa (-180 a 180)"}
+    responses:
+      201: {description: Ciudad creada}
+      400: {description: Nombre inválido}
+      403: {description: Solo el administrador}
+      409: {description: La ciudad ya existe}
+    """
+    requerir_admin()
+    data = leer_json(request)
+    nombre = nombre_catalogo(data, "nombre", "El nombre de la ciudad").title()
+    coordenadas = {}
+    for campo, limite in (("latitud", 90), ("longitud", 180)):
+        valor = data.get(campo)
+        if valor in (None, ""):
+            coordenadas[campo] = None
+            continue
+        try:
+            coordenadas[campo] = round(float(valor), 5)
+            if not -limite <= coordenadas[campo] <= limite:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise ErrorApi("Datos inválidos", 400, {campo: f"La {campo} debe ser un número entre -{limite} y {limite}"})
+    if (coordenadas["latitud"] is None) != (coordenadas["longitud"] is None):
+        raise ErrorApi("Datos inválidos", 400, {"longitud": "Escriba la latitud y la longitud, o ninguna"})
+    repetido = f"La ciudad {nombre} ya existe"
+    if ya_existe("ciudades", nombre):
+        raise ErrorApi(repetido, 409, {"nombre": repetido})
+    insertar_unico("INSERT INTO vuelos.ciudades (nombre, latitud, longitud) VALUES (:n, :latitud, :longitud)",
+                   {"n": nombre, **coordenadas}, repetido, "nombre")
+    return jsonify({"mensaje": f"Ciudad {nombre} creada", "ciudad": nombre}), 201
+
+
+@app.post("/api/vuelos/aerolineas")
+def crear_aerolinea():
+    """[Administrador] Registrar una aerolínea con su código de 2 caracteres (prefijo de sus vuelos)
+    ---
+    tags: [Catálogos]
+    security: [{Bearer: []}]
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required: [nombre, codigo]
+          properties:
+            nombre: {type: string, example: Aeroregional}
+            codigo: {type: string, example: AR}
+    responses:
+      201: {description: Aerolínea creada}
+      400: {description: Datos inválidos}
+      403: {description: Solo el administrador}
+      409: {description: El nombre o el código ya existen}
+    """
+    requerir_admin()
+    data = leer_json(request)
+    nombre = nombre_catalogo(data, "nombre", "El nombre de la aerolínea", letras_solo=False)
+    codigo = str(data.get("codigo") or "").strip().upper()
+    if len(codigo) != 2 or not codigo.isalnum():
+        raise ErrorApi("Datos inválidos", 400, {"codigo": "El código debe tener 2 letras o números (ej. LA)"})
+    if ya_existe("aerolineas", nombre):
+        raise ErrorApi(f"La aerolínea {nombre} ya existe", 409, {"nombre": f"La aerolínea {nombre} ya existe"})
+    insertar_unico("INSERT INTO vuelos.aerolineas (nombre, codigo) VALUES (:n, :c)", {"n": nombre, "c": codigo},
+                   f"El código {codigo} ya lo usa otra aerolínea", "codigo")
+    return jsonify({"mensaje": f"Aerolínea {nombre} ({codigo}) creada",
+                    "aerolinea": {"nombre": nombre, "codigo": codigo}}), 201
+
+
+@app.post("/api/vuelos/aviones")
+def crear_avion():
+    """[Administrador] Registrar un tipo de avión con su cabina
+    ---
+    tags: [Catálogos]
+    security: [{Bearer: []}]
+    description: >
+      Cada clase indica cuántas filas tiene y su configuración: asientos por bloque separados
+      por pasillos ("3-3", "2-4-2"). Las filas se numeran seguidas desde la parte delantera
+      (First, Business, Premium, Economy) y las letras van de la A en adelante (sin la I).
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required: [nombre, clases]
+          properties:
+            nombre: {type: string, example: Airbus A321neo}
+            clases:
+              type: array
+              items:
+                type: object
+                properties:
+                  clase: {type: string, enum: [FIRST, BUSINESS, PREMIUM, ECONOMY]}
+                  filas: {type: integer, example: 25}
+                  configuracion: {type: string, example: "3-3"}
+    responses:
+      201: {description: Avión creado; devuelve el resumen de su cabina}
+      400: {description: Datos inválidos}
+      403: {description: Solo el administrador}
+      409: {description: El avión ya existe}
+    """
+    requerir_admin()
+    data = leer_json(request)
+    nombre = nombre_catalogo(data, "nombre", "El nombre del avión", letras_solo=False)
+    clases, errores = construir_clases(data.get("clases"))
+    if errores:
+        raise ErrorApi("Cabina inválida", 400, errores)
+    cab = crear_cabina(nombre, clases)
+    repetido = f"El avión {nombre} ya existe"
+    if ya_existe("aviones", nombre):
+        raise ErrorApi(repetido, 409, {"nombre": repetido})
+    insertar_unico("INSERT INTO vuelos.aviones (nombre, clases, total_asientos) VALUES (:n, CAST(:c AS jsonb), :t)",
+                   {"n": nombre, "c": json.dumps(clases), "t": cab.total}, repetido, "nombre")
+    cargar_cabinas()
+    return jsonify({"mensaje": f"Avión {nombre} creado con {cab.total} asientos", "avion": cab.resumen()}), 201
+
+
+# ---------- Creación de vuelos (administrador) ----------
 
 def texto_obligatorio(data, campo, nombre, maximo=60):
     valor = " ".join(str(data.get(campo) or "").split())
@@ -197,10 +407,10 @@ def leer_fecha_hora(data, campo, nombre):
 
 @app.post("/api/vuelos")
 def crear_vuelo():
-    """[Administración] Crear un vuelo (el gateway lo expone en /api/admin/vuelos con X-Admin-Key)
+    """[Administrador] Crear un vuelo con ciudades, aerolínea y avión registrados
     ---
-    tags: [Interno]
-    security: [{ServiceKey: []}]
+    tags: [Vuelos]
+    security: [{Bearer: []}]
     parameters:
       - in: body
         name: body
@@ -219,19 +429,30 @@ def crear_vuelo():
     responses:
       201: {description: Vuelo creado con la cabina del avión elegido}
       400: {description: Datos inválidos (detalle por campo)}
-      403: {description: Falta la clave de servicio}
+      401: {description: Token inválido o ausente}
+      403: {description: Solo el administrador}
     """
-    requerir_clave_servicio()
+    requerir_admin()
     data = leer_json(request)
+    with engine.connect() as con:
+        ciudades = {c.casefold(): c for c in catalogo_ciudades(con)}
+        aerolineas = {a["nombre"].casefold(): a for a in catalogo_aerolineas(con)}
+    aviones = cargar_cabinas()
     errores = {}
     origen, errores["origen"] = texto_obligatorio(data, "origen", "El origen")
     destino, errores["destino"] = texto_obligatorio(data, "destino", "El destino")
     aerolinea, errores["aerolinea"] = texto_obligatorio(data, "aerolinea", "La aerolínea")
     salida, errores["fecha_salida"] = leer_fecha_hora(data, "fecha_salida", "La fecha de salida")
     llegada, errores["fecha_llegada"] = leer_fecha_hora(data, "fecha_llegada", "La fecha de llegada")
+    if origen and origen.casefold() not in ciudades:
+        errores["origen"] = f"La ciudad {origen} no está registrada"
+    if destino and destino.casefold() not in ciudades:
+        errores["destino"] = f"La ciudad {destino} no está registrada"
+    if aerolinea and aerolinea.casefold() not in aerolineas:
+        errores["aerolinea"] = f"La aerolínea {aerolinea} no está registrada"
     avion = data.get("avion")
-    if avion not in CABINAS:
-        errores["avion"] = f"Avión no válido. Opciones: {', '.join(CABINAS)}"
+    if avion not in aviones:
+        errores["avion"] = "Elija un avión registrado"
     try:
         precio = round(float(data.get("precio")), 2)
         if not 1 <= precio <= 10000:
@@ -248,20 +469,20 @@ def crear_vuelo():
     if errores:
         raise ErrorApi("Datos del vuelo inválidos", 400, errores)
 
-    cab = CABINAS[avion]
-    prefijo = ("".join(c for c in aerolinea.upper() if c.isalpha()) + "XX")[:2]
+    cab = aviones[avion]
+    linea = aerolineas[aerolinea.casefold()]
     with engine.begin() as con:
         vuelo_id = con.execute(text("""
             INSERT INTO vuelos.vuelos (codigo, aerolinea, avion, origen, destino, fecha_salida, fecha_llegada,
                                        precio, asientos_totales, asientos_disponibles)
             VALUES (:codigo, :aerolinea, :avion, :origen, :destino, :salida, :llegada, :precio, :total, :total)
             RETURNING id
-        """), {"codigo": f"TMP-{uuid.uuid4().hex[:12]}", "aerolinea": aerolinea, "avion": avion,
-               "origen": origen.title(), "destino": destino.title(), "salida": salida, "llegada": llegada,
-               "precio": precio, "total": cab.total}).scalar()
-        # Código definitivo a partir del id: único y fácil de leer (p. ej. LA0412)
+        """), {"codigo": f"TMP-{uuid.uuid4().hex[:12]}", "aerolinea": linea["nombre"], "avion": avion,
+               "origen": ciudades[origen.casefold()], "destino": ciudades[destino.casefold()],
+               "salida": salida, "llegada": llegada, "precio": precio, "total": cab.total}).scalar()
+        # Código definitivo: código de la aerolínea + id (único y fácil de leer, p. ej. LA0412)
         con.execute(text("UPDATE vuelos.vuelos SET codigo = :c WHERE id = :id"),
-                    {"c": f"{prefijo}{vuelo_id:04d}", "id": vuelo_id})
+                    {"c": f"{linea['codigo']}{vuelo_id:04d}", "id": vuelo_id})
         fila = buscar_vuelo(con, vuelo_id)
     return jsonify({"mensaje": f"Vuelo {fila.codigo} creado con {cab.total} asientos ({cab.avion})",
                     "vuelo": vuelo_a_dict(fila), "cabina": cab.resumen()}), 201
@@ -364,10 +585,11 @@ def retener_asiento(vuelo_id, asiento):
       200: {description: Asiento retenido para el usuario}
       400: {description: El vuelo ya despegó o se alcanzó el máximo de asientos}
       401: {description: Token inválido o ausente}
+      403: {description: El administrador no puede seleccionar asientos}
       404: {description: Vuelo o asiento no existe}
       409: {description: El asiento ya fue tomado por otro usuario}
     """
-    usuario = requerir_token()
+    usuario = no_admin(requerir_token(), "seleccionar asientos: solo puede ver los vuelos y los asientos")
     try:
         with engine.begin() as con:
             vuelo = buscar_vuelo(con, vuelo_id, bloquear=True)

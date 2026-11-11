@@ -4,9 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'pantallas/acceso.dart';
-import 'pantallas/administracion.dart';
+import 'pantallas/catalogos.dart';
 import 'pantallas/crear_vuelo.dart';
-import 'pantallas/estado.dart';
 import 'pantallas/perfil.dart';
 import 'pantallas/reservas.dart';
 import 'pantallas/vuelos.dart';
@@ -54,9 +53,8 @@ class _InicioState extends State<Inicio> {
   int _indice = 0;
   final _reservas = GlobalKey<PantallaReservasState>();
   final _perfil = GlobalKey<PantallaPerfilState>();
-  final _estado = GlobalKey<PantallaEstadoState>();
-  final _admin = GlobalKey<PantallaAdministracionState>();
   final _crearVuelo = GlobalKey<PantallaCrearVueloState>();
+  final _catalogos = GlobalKey<PantallaCatalogosState>();
 
   @override
   void initState() {
@@ -80,40 +78,39 @@ class _InicioState extends State<Inicio> {
   }
 
   /// Pestañas visibles: sin sesión solo la búsqueda de vuelos; el cliente ve sus reservas y su perfil;
-  /// el administrador (ingresó con ADMIN_KEY) ve el estado del sistema y el control de servicios.
+  /// el administrador (usuario con rol ADMIN) crea vuelos y catálogos, y solo consulta los vuelos.
   List<_Vista> _vistas() {
     final sesion = widget.sesion;
     return [
       _Vista(Icons.flight, 'Buscar vuelos', PantallaVuelos(sesion: sesion)),
-      if (sesion.autenticado) ...[
+      if (sesion.esCliente)
         _Vista(
           Icons.confirmation_number,
           'Mis reservas',
           PantallaReservas(key: _reservas, sesion: sesion),
           () => _reservas.currentState?.cargar(),
         ),
+      if (sesion.esAdmin) ...[
+        _Vista(
+          Icons.add_circle,
+          'Crear vuelos',
+          PantallaCrearVuelo(key: _crearVuelo, sesion: sesion),
+          () => _crearVuelo.currentState?.cargar(),
+        ),
+        _Vista(
+          Icons.library_add,
+          'Catálogos',
+          PantallaCatalogos(key: _catalogos, sesion: sesion),
+          () => _catalogos.currentState?.cargar(),
+        ),
+      ],
+      if (sesion.autenticado)
         _Vista(
           Icons.person,
           'Perfil',
           PantallaPerfil(key: _perfil, sesion: sesion),
           () => _perfil.currentState?.cargar(),
         ),
-      ],
-      if (sesion.esAdmin) ...[
-        _Vista(Icons.add_circle, 'Crear vuelos', PantallaCrearVuelo(key: _crearVuelo, sesion: sesion)),
-        _Vista(
-          Icons.monitor_heart,
-          'Estado',
-          PantallaEstado(key: _estado, sesion: sesion),
-          () => _estado.currentState?.cargar(),
-        ),
-        _Vista(
-          Icons.admin_panel_settings,
-          'Servicios',
-          PantallaAdministracion(key: _admin, sesion: sesion),
-          () => _admin.currentState?.cargar(),
-        ),
-      ],
     ];
   }
 
@@ -136,7 +133,7 @@ class _InicioState extends State<Inicio> {
       appBar: AppBar(
         title: const Row(children: [Icon(Icons.flight), SizedBox(width: 8), Text('AeroReservas')]),
         actions: [
-          if (sesion.conSesion) ...[
+          if (sesion.autenticado) ...[
             if (sesion.esAdmin)
               const Chip(avatar: Icon(Icons.admin_panel_settings, size: 18), label: Text('Administrador'))
             else if (ancho)

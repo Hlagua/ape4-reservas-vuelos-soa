@@ -98,6 +98,7 @@ def login():
         "sub": str(usuario["id"]),
         "nombre": usuario["nombre"],
         "email": usuario["email"],
+        "rol": usuario.get("rol", "CLIENTE"),
         "jti": jti,
         "exp": datetime.now(timezone.utc) + timedelta(hours=config.JWT_HORAS),  # el estándar JWT usa UTC
     }, config.JWT_SECRET, algorithm="HS256")
@@ -113,7 +114,8 @@ def login():
         "token": token,
         "tipo": "Bearer",
         "expira": expira.isoformat(timespec="seconds"),
-        "usuario": {"id": usuario["id"], "nombre": usuario["nombre"], "email": usuario["email"]},
+        "usuario": {"id": usuario["id"], "nombre": usuario["nombre"], "email": usuario["email"],
+                    "rol": usuario.get("rol", "CLIENTE")},
     })
 
 
@@ -130,7 +132,8 @@ def verificar():
     datos = validar_token(token_del_encabezado())
     return jsonify({
         "valido": True,
-        "usuario": {"id": int(datos["sub"]), "nombre": datos["nombre"], "email": datos["email"]},
+        "usuario": {"id": int(datos["sub"]), "nombre": datos["nombre"], "email": datos["email"],
+                    "rol": datos.get("rol", "CLIENTE")},
     })
 
 

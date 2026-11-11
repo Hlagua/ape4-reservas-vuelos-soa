@@ -19,17 +19,14 @@ class Sesion extends ChangeNotifier {
   final SharedPreferences _prefs;
   Map<String, dynamic>? usuario;
 
-  /// Clave ADMIN_KEY del administrador: solo se guarda en memoria, nunca en el dispositivo.
-  String? claveAdmin;
-
-  /// Cliente con cuenta (token JWT).
+  /// Hay un usuario con sesión (token JWT), cliente o administrador.
   bool get autenticado => api.token != null;
 
-  /// Administrador: ingresó con la clave ADMIN_KEY del backend (no es un rol de la base de datos).
-  bool get esAdmin => claveAdmin != null;
+  /// Administrador: usuario con rol ADMIN (ingresa con email y contraseña como cualquier usuario).
+  bool get esAdmin => autenticado && usuario?['rol'] == 'ADMIN';
 
-  /// Hay alguien dentro de la aplicación (cliente o administrador).
-  bool get conSesion => autenticado || esAdmin;
+  /// Cliente: puede comprar y gestionar sus reservas.
+  bool get esCliente => autenticado && !esAdmin;
 
   /// Se activa cuando el backend rechaza el token (sesión expirada).
   bool sesionExpirada = false;
@@ -54,14 +51,6 @@ class Sesion extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Ingreso del administrador: el Gateway valida la clave consultando el estado de los servicios.
-  Future<void> iniciarAdmin(String clave) async {
-    if (autenticado) await cerrar();
-    await api.adminServicios(clave);
-    claveAdmin = clave;
-    notifyListeners();
-  }
-
   /// Cierra la sesión: revoca el token en el servidor y lo borra del dispositivo.
   Future<void> cerrar() async {
     if (api.token != null && !sesionExpirada) {
@@ -73,7 +62,6 @@ class Sesion extends ChangeNotifier {
     }
     api.token = null;
     usuario = null;
-    claveAdmin = null;
     await _prefs.remove('token');
     await _prefs.remove('usuario');
     notifyListeners();

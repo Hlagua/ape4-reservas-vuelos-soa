@@ -95,16 +95,6 @@ def admin_controlar(clave, accion):
     return supervisor("POST", f"/servicios/{clave}/{accion}")
 
 
-@app.post("/api/admin/vuelos")
-def admin_crear_vuelo():
-    """Crea un vuelo (requiere X-Admin-Key). El gateway valida al administrador y llama al
-    servicio de Vuelos con la clave de servicio, así la clave de administración no sale del gateway."""
-    requerir_admin()
-    resp = llamar_servicio("POST", f"{config.VUELOS_URL}/api/vuelos", interno=True, data=request.get_data(),
-                           headers={"Content-Type": "application/json"})
-    return Response(resp.content, status=resp.status_code, content_type="application/json")
-
-
 @app.route("/api/<servicio>", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 @app.route("/api/<servicio>/<path:resto>", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 def enrutar(servicio, resto=""):

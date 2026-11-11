@@ -63,9 +63,10 @@ Sigue el modelo de la guía (usuarios, vuelos, reservas y tokens), más las tabl
 
 | Esquema.tabla | Dueño | Columnas principales |
 |---|---|---|
-| `usuarios.usuarios` | Usuarios | **id** (PK), nombre, **correo** (único), password_hash, fecha_registro |
+| `usuarios.usuarios` | Usuarios | **id** (PK), nombre, **correo** (único), password_hash, rol (CLIENTE/ADMIN), fecha_registro |
 | `autenticacion.tokens` | Autenticación | **id** (PK), **usuario_id** (FK), jti, token_hash (SHA-256 del JWT), fecha_emision, expiracion, estado (ACTIVO/REVOCADO) |
 | `vuelos.vuelos` | Vuelos | **id** (PK), codigo, aerolinea, avion, origen, destino, **fecha**, **hora_salida**, **hora_llegada**, precio, asientos_totales, **asientos_disponibles** |
+| `vuelos.ciudades` · `vuelos.aerolineas` · `vuelos.aviones` | Vuelos | Catálogos del administrador: ciudad (nombre, latitud, longitud), aerolínea (nombre, código de 2 caracteres), avión (nombre, clases con filas y configuración, total_asientos) |
 | `vuelos.asientos` | Vuelos | **PK (vuelo_id, asiento)**, vuelo_id (FK), clase, estado (BLOQUEADO/RETENIDO/OCUPADO), usuario_id, reserva_id, expira_en |
 | `reservas.reservas` | Reservas | **id** (PK), **usuario_id** (FK), **vuelo_id** (FK), **cantidad_asientos**, total, estado, fecha_reserva |
 | `reservas.pasajeros` | Reservas | id (PK), reserva_id (FK), asiento, clase, nombre, tipo_documento, documento, precio |
@@ -75,7 +76,7 @@ Sigue el modelo de la guía (usuarios, vuelos, reservas y tokens), más las tabl
 - **Columnas derivadas:** `fecha`, `hora_salida` y `hora_llegada` se calculan de `fecha_salida` y `fecha_llegada`.
 - **`asientos_disponibles`:** la mantienen actualizada triggers sobre `vuelos.asientos`.
 - **Token:** por seguridad no se guarda el JWT, sino su huella SHA-256.
-- **Tipos de avión:** cada vuelo guarda su avión y el mapa de asientos usa la cabina de ese avión (`backend/servicio_vuelos/cabina.py`): Airbus A340-600 (226 asientos, 4 clases), Boeing 787-9 (252, 3 clases), Airbus A320 (162, 2 clases), Embraer E190 (97, 2 clases) y ATR 72-600 (72, solo Economy).
+- **Tipos de avión:** cada vuelo guarda su avión y el mapa de asientos usa la cabina de ese avión (tabla `vuelos.aviones`). Vienen cargados Airbus A340-600 (226 asientos, 4 clases), Boeing 787-9 (252, 3 clases), Airbus A320 (162, 2 clases), Embraer E190 (97, 2 clases) y ATR 72-600 (72, solo Economy); el administrador puede crear otros.
 - **Modificar sin volver a pagar:** los asientos que se mantienen conservan el precio pagado y los nuevos se cobran al precio de su clase. Si el total sube se cobra solo la diferencia; si baja, se devuelve. Cada diferencia queda en `reservas.ajustes`.
 
 ## Concurrencia en la selección de asientos
@@ -100,8 +101,9 @@ Todas las rutas se consumen a través del Gateway: `https://<servicio>.onrender.
 | Autenticación | `POST /api/auth/logout` | Bearer | Revoca el token |
 | Vuelos | `GET /api/vuelos?origen=&destino=&fecha=&pasajeros=` | — | Consulta de vuelos |
 | Vuelos | `GET /api/vuelos/ciudades` | — | Ciudades de origen y destino |
-| Vuelos | `GET /api/vuelos/aviones` | — | Tipos de avión con sus asientos por clase |
-| Gateway | `POST /api/admin/vuelos` | `X-Admin-Key` | Crear vuelo `{origen, destino, aerolinea, avion, fecha_salida, fecha_llegada, precio}` |
+| Vuelos | `GET /api/vuelos/catalogos` · `GET /api/vuelos/aviones` | — | Ciudades (con coordenadas), aerolíneas y aviones |
+| Vuelos | `POST /api/vuelos/ciudades` · `/aerolineas` · `/aviones` | Bearer (ADMIN) | Crear ciudad `{nombre, latitud?, longitud?}`, aerolínea `{nombre, codigo}` o avión `{nombre, clases:[{clase, filas, configuracion}]}` |
+| Vuelos | `POST /api/vuelos` | Bearer (ADMIN) | Crear vuelo `{origen, destino, aerolinea, avion, fecha_salida, fecha_llegada, precio}` |
 | Vuelos | `GET /api/vuelos/{id}/asientos` | Bearer opcional | Mapa de asientos por clase |
 | Vuelos | `POST` / `DELETE /api/vuelos/{id}/asientos/{asiento}/retener` | Bearer | Seleccionar o soltar un asiento |
 | Reservas | `POST /api/reservas` | Bearer | Reservar `{vuelo_id, pasajeros:[{asiento, nombre, tipo_documento, documento}]}` |
@@ -147,7 +149,7 @@ Las mismas reglas se validan en la app (`app_flutter/lib/utils/validaciones.dart
 1. Cree un proyecto en [supabase.com](https://supabase.com). Este proyecto usa la región `us-west-2`, y Render está configurado en Oregón, la misma zona.
 2. En **Connect > Transaction pooler**, copie la cadena de conexión `postgresql://postgres.<proyecto>:<clave>@aws-1-<region>.pooler.supabase.com:6543/postgres`. El *Session pooler* del plan gratuito admite solo 15 conexiones y no alcanza para los 4 servicios.
 3. Cree `backend/.env` a partir de `backend/.env.example` y pegue la cadena en `DATABASE_URL`.
-4. Cree las tablas y los datos de ejemplo (30 días de vuelos y el usuario `demo@uta.edu.ec` / `demo1234`):
+4. Cree las tablas y los datos de ejemplo (30 días de vuelos, catálogos, el cliente `demo@uta.edu.ec` / `demo1234` y el administrador `admin@uta.edu.ec` / `admin1234`):
 
 ```bash
 cd backend
@@ -190,7 +192,7 @@ flutter pub get
 flutter run --dart-define=API_URL=https://aeroreservas-backend.onrender.com
 ```
 
-- La dirección del backend también se puede cambiar dentro de la app, con el ícono de red en la pantalla **Iniciar sesión** (o en **Estado** si ingresó como administrador).
+- La dirección del backend también se puede cambiar dentro de la app, con el ícono de red en la pantalla **Iniciar sesión**.
 - Use `-d windows`, `-d chrome` o un teléfono Android. Windows requiere el *Modo de desarrollador*.
 
 ### Demostración de la concurrencia
@@ -218,9 +220,17 @@ python servicio.py detener vuelos --url https://aeroreservas-backend.onrender.co
 python servicio.py iniciar vuelos --url https://aeroreservas-backend.onrender.com
 ```
 
-Mientras un servicio está apagado, `GET /api/salud` lo muestra como `caído`, y la pantalla **Estado** de la app (solo para el administrador) también.
+Mientras un servicio está apagado, `GET /api/salud` lo muestra como `caído`.
 
-También se puede hacer **desde la app**: en **Iniciar sesión > Ingresar como administrador** se escribe la clave `ADMIN_KEY`. No es un rol guardado en la base de datos: el Gateway valida la clave y la app solo la mantiene en memoria mientras dura la sesión. El administrador ve las pestañas **Crear vuelos**, **Estado** y **Servicios**. En Crear vuelos elige origen, destino, aerolínea, tipo de avión, fecha y hora de salida y de llegada, y el precio base; el vuelo aparece en la búsqueda con el mapa de asientos de ese avión. En Servicios cada servicio tiene un interruptor para apagarlo o encenderlo.
+## Roles en la app
+
+El **administrador** es un usuario con rol `ADMIN` e ingresa con email y contraseña igual que un cliente. El rol viaja en el token JWT y los servicios lo validan:
+
+- **Crear vuelos:** elige origen, destino, aerolínea y tipo de avión de los catálogos, la fecha y hora de salida y de llegada, y el precio base. El vuelo aparece en la búsqueda con el mapa de asientos de ese avión.
+- **Catálogos:** crea ciudades (origen y destino, con coordenadas opcionales para el mapa), aerolíneas (con su código, que es el prefijo de sus vuelos) y aviones (clases, filas y configuración por fila, por ejemplo 3-3 o 2-4-2).
+- En **Buscar vuelos** puede ver los vuelos y el mapa de asientos, pero **no puede seleccionar ni comprar** (el backend responde 403).
+
+Al **comprar**, el cliente ve una animación: el mapamundi se acerca a la ruta y un avión vuela del origen al destino; al final se muestran la reserva, las horas de salida y llegada, la duración y el total pagado.
 
 Pestañas visibles según quién ingresó:
 
@@ -228,7 +238,7 @@ Pestañas visibles según quién ingresó:
 |---|---|
 | Sin sesión | Buscar vuelos |
 | Cliente (email y contraseña) | Buscar vuelos, Mis reservas, Perfil |
-| Administrador (`ADMIN_KEY`) | Buscar vuelos, Crear vuelos, Estado, Servicios |
+| Administrador (rol ADMIN) | Buscar vuelos (solo consulta), Crear vuelos, Catálogos, Perfil |
 
 ### Caída de la base de datos
 

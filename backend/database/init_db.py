@@ -13,7 +13,7 @@ from werkzeug.security import generate_password_hash
 
 from common import config
 from common.db import engine
-from servicio_vuelos.cabina import ASIENTOS, AVION, TOTAL_ASIENTOS
+from servicio_vuelos.cabina import ASIENTOS, AVION, AVIONES, CABINAS, TOTAL_ASIENTOS
 
 # Cada servicio es dueño de su propio esquema. Como todos viven en la misma base de Supabase,
 # las claves foráneas del modelo de la guía (usuarios 1:N reservas/tokens, vuelos 1:N reservas) se declaran igual.
@@ -28,9 +28,12 @@ SCRIPT_TABLAS = [
         nombre VARCHAR(80) NOT NULL,
         correo VARCHAR(150) NOT NULL UNIQUE,
         password_hash VARCHAR(255) NOT NULL,
+        rol VARCHAR(10) NOT NULL DEFAULT 'CLIENTE' CHECK (rol IN ('CLIENTE', 'ADMIN')),
         fecha_registro TIMESTAMP NOT NULL DEFAULT LOCALTIMESTAMP
     )
     """,
+    # Bases creadas antes de existir los roles
+    "ALTER TABLE usuarios.usuarios ADD COLUMN IF NOT EXISTS rol VARCHAR(10) NOT NULL DEFAULT 'CLIENTE'",
     # Tokens JWT emitidos: permiten cerrar sesión (revocar) antes de que expiren
     """
     CREATE TABLE IF NOT EXISTS autenticacion.tokens (
@@ -65,6 +68,34 @@ SCRIPT_TABLAS = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS ix_vuelos_ruta ON vuelos.vuelos (origen, destino, fecha)",
+    # Catálogos que administra el administrador: ciudades (origen y destino), aerolíneas y tipos de avión
+    """
+    CREATE TABLE IF NOT EXISTS vuelos.ciudades (
+        id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        nombre VARCHAR(60) NOT NULL UNIQUE,
+        -- Coordenadas para dibujar la ruta en el mapa de la app (opcionales)
+        latitud NUMERIC(8,5) NULL CHECK (latitud BETWEEN -90 AND 90),
+        longitud NUMERIC(8,5) NULL CHECK (longitud BETWEEN -180 AND 180)
+    )
+    """,
+    "ALTER TABLE vuelos.ciudades ADD COLUMN IF NOT EXISTS latitud NUMERIC(8,5) NULL",
+    "ALTER TABLE vuelos.ciudades ADD COLUMN IF NOT EXISTS longitud NUMERIC(8,5) NULL",
+    """
+    CREATE TABLE IF NOT EXISTS vuelos.aerolineas (
+        id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        nombre VARCHAR(60) NOT NULL UNIQUE,
+        codigo CHAR(2) NOT NULL UNIQUE
+    )
+    """,
+    # clases: [{clase, nombre, filas: [..], grupos: [[letras], ..], factor}] (cabina del avión)
+    """
+    CREATE TABLE IF NOT EXISTS vuelos.aviones (
+        id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        nombre VARCHAR(60) NOT NULL UNIQUE,
+        clases JSONB NOT NULL,
+        total_asientos INTEGER NOT NULL CHECK (total_asientos > 0)
+    )
+    """,
     # Un asiento sin fila en esta tabla está DISPONIBLE.
     # La clave primaria (vuelo_id, asiento) garantiza que dos usuarios
     # nunca puedan tener el mismo asiento al mismo tiempo.
@@ -151,6 +182,16 @@ RUTAS = [
 AEROLINEAS = ["LATAM", "Avianca", "Equair", "Iberia"]
 DIAS_A_GENERAR = 30
 USUARIO_DEMO = {"nombre": "Usuario Demo", "email": "demo@uta.edu.ec", "password": "demo1234"}
+# Administrador de ejemplo: crea vuelos y catálogos; solo consulta vuelos y asientos (no compra)
+USUARIO_ADMIN = {"nombre": "Administrador", "email": "admin@uta.edu.ec", "password": "admin1234"}
+# Ciudades iniciales con sus coordenadas (latitud, longitud)
+CIUDADES = {
+    "Quito": (-0.18065, -78.46784), "Guayaquil": (-2.17098, -79.92236), "Cuenca": (-2.90055, -79.00453),
+    "Galápagos": (-0.74302, -90.31538), "Bogotá": (4.71099, -74.07209), "Lima": (-12.04637, -77.04279),
+    "Madrid": (40.41678, -3.70379), "Ambato": (-1.24908, -78.61675), "Loja": (-3.99313, -79.20422),
+    "Manta": (-0.96779, -80.70891),
+}
+CODIGOS_AEROLINEA = {"LATAM": "LA", "Avianca": "AV", "Equair": "EQ", "Iberia": "IB", "UTA Air": "UT"}
 
 
 def borrar_esquemas():
@@ -226,13 +267,41 @@ def _json(filas):
 
 
 def cargar_usuario_demo():
+    for usuario, rol in ((USUARIO_DEMO, "CLIENTE"), (USUARIO_ADMIN, "ADMIN")):
+        with engine.begin() as con:
+            if con.execute(text("SELECT 1 FROM usuarios.usuarios WHERE correo = :e"), {"e": usuario["email"]}).first():
+                continue
+            con.execute(text("""
+                INSERT INTO usuarios.usuarios (nombre, correo, password_hash, rol) VALUES (:n, :e, :h, :r)
+            """), {"n": usuario["nombre"], "e": usuario["email"], "r": rol,
+                   "h": generate_password_hash(usuario["password"], method="pbkdf2:sha256")})
+        print(f"Usuario {rol.lower()} creado: {usuario['email']} / {usuario['password']}")
+
+
+def cargar_catalogos():
+    """Ciudades, aerolíneas y aviones iniciales (incluye los que ya usan los vuelos existentes)."""
     with engine.begin() as con:
-        if con.execute(text("SELECT 1 FROM usuarios.usuarios WHERE correo = :e"), {"e": USUARIO_DEMO["email"]}).first():
-            return
-        con.execute(text("INSERT INTO usuarios.usuarios (nombre, correo, password_hash) VALUES (:n, :e, :h)"),
-                    {"n": USUARIO_DEMO["nombre"], "e": USUARIO_DEMO["email"],
-                     "h": generate_password_hash(USUARIO_DEMO["password"], method="pbkdf2:sha256")})
-    print(f"Usuario demo creado: {USUARIO_DEMO['email']} / {USUARIO_DEMO['password']}")
+        for nombre, (lat, lon) in CIUDADES.items():
+            con.execute(text("""
+                INSERT INTO vuelos.ciudades (nombre, latitud, longitud) VALUES (:n, :lat, :lon)
+                ON CONFLICT (nombre) DO UPDATE SET latitud = COALESCE(vuelos.ciudades.latitud, EXCLUDED.latitud),
+                                                   longitud = COALESCE(vuelos.ciudades.longitud, EXCLUDED.longitud)
+            """), {"n": nombre, "lat": lat, "lon": lon})
+        con.execute(text("""
+            INSERT INTO vuelos.ciudades (nombre)
+            SELECT origen FROM vuelos.vuelos UNION SELECT destino FROM vuelos.vuelos
+            ON CONFLICT (nombre) DO NOTHING
+        """))
+        for nombre, codigo in CODIGOS_AEROLINEA.items():
+            con.execute(text("""
+                INSERT INTO vuelos.aerolineas (nombre, codigo) VALUES (:n, :c) ON CONFLICT DO NOTHING
+            """), {"n": nombre, "c": codigo})
+        for nombre, clases in AVIONES.items():
+            con.execute(text("""
+                INSERT INTO vuelos.aviones (nombre, clases, total_asientos)
+                VALUES (:n, CAST(:c AS jsonb), :t) ON CONFLICT (nombre) DO NOTHING
+            """), {"n": nombre, "c": _json(clases), "t": CABINAS[nombre].total})
+    print("Catálogos de ciudades, aerolíneas y aviones listos")
 
 
 if __name__ == "__main__":
@@ -240,4 +309,5 @@ if __name__ == "__main__":
         borrar_esquemas()
     crear_tablas()
     cargar_vuelos()
+    cargar_catalogos()
     cargar_usuario_demo()

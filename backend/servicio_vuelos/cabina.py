@@ -61,8 +61,76 @@ class Cabina:
     def resumen(self):
         return {"avion": self.avion, "total_asientos": self.total, "clases": [
             {"clase": c["clase"], "nombre": c["nombre"], "factor": c["factor"],
+             "filas": len(c["filas"]), "configuracion": configuracion(c),
              "asientos": sum(1 for clase in self.asientos.values() if clase == c["clase"])}
             for c in self.clases]}
+
+
+# Clases que puede tener un avión nuevo, en orden desde la parte delantera, con su factor de precio
+CLASES_DISPONIBLES = {
+    "FIRST": ("First", 6.0),
+    "BUSINESS": ("Business", 3.5),
+    "PREMIUM": ("Premium Economy", 1.6),
+    "ECONOMY": ("Economy", 1.0),
+}
+LETRAS = "ABCDEFGHJKLMNOP"  # sin la I, como en las aerolíneas (se confunde con el 1)
+MAX_ASIENTOS_AVION = 600
+
+
+def construir_clases(definicion):
+    """Arma la cabina de un avión nuevo.
+
+    definicion: [{"clase": "ECONOMY", "filas": 25, "configuracion": "3-3"}, ...]
+    La configuración son los asientos de cada bloque separados por pasillos ("2-4-2").
+    Las filas se numeran seguidas desde la parte delantera. Devuelve (clases, errores).
+    """
+    errores = {}
+    if not isinstance(definicion, list) or not definicion:
+        return None, {"clases": "Agregue al menos una clase"}
+    vistas, clases, fila_inicial = set(), [], 1
+    por_orden = sorted((d for d in definicion if isinstance(d, dict)),
+                       key=lambda d: list(CLASES_DISPONIBLES).index(d.get("clase"))
+                       if d.get("clase") in CLASES_DISPONIBLES else 99)
+    for i, d in enumerate(por_orden):
+        clase = d.get("clase")
+        if clase not in CLASES_DISPONIBLES:
+            errores[f"clases[{i}].clase"] = f"Clase no válida. Opciones: {', '.join(CLASES_DISPONIBLES)}"
+            continue
+        if clase in vistas:
+            errores[f"clases[{i}].clase"] = f"La clase {clase} está repetida"
+            continue
+        vistas.add(clase)
+        try:
+            filas = int(d.get("filas"))
+            if not 1 <= filas <= 60:
+                raise ValueError
+        except (TypeError, ValueError):
+            errores[f"clases[{i}].filas"] = "Las filas deben ser un número entre 1 y 60"
+            continue
+        try:
+            bloques = [int(x) for x in str(d.get("configuracion", "")).strip().split("-")]
+            if not 1 <= len(bloques) <= 4 or any(not 1 <= b <= 4 for b in bloques) or sum(bloques) > len(LETRAS):
+                raise ValueError
+        except ValueError:
+            errores[f"clases[{i}].configuracion"] = "Use bloques de 1 a 4 asientos separados por guiones (ej. 3-3 o 2-4-2)"
+            continue
+        letras, grupos = iter(LETRAS), []
+        for b in bloques:
+            grupos.append([next(letras) for _ in range(b)])
+        nombre, factor = CLASES_DISPONIBLES[clase]
+        clases.append({"clase": clase, "nombre": nombre, "filas": list(range(fila_inicial, fila_inicial + filas)),
+                       "grupos": grupos, "factor": factor})
+        fila_inicial += filas
+    if not errores:
+        total = sum(len(c["filas"]) * sum(len(g) for g in c["grupos"]) for c in clases)
+        if total > MAX_ASIENTOS_AVION:
+            errores["clases"] = f"El avión tendría {total} asientos; el máximo es {MAX_ASIENTOS_AVION}"
+    return (None, errores) if errores else (clases, {})
+
+
+def configuracion(clase):
+    """'3-3' a partir de los grupos de una clase."""
+    return "-".join(str(len(g)) for g in clase["grupos"])
 
 
 def _crear(avion, clases):
@@ -73,9 +141,8 @@ def _crear(avion, clases):
 CABINAS = {avion: _crear(avion, clases) for avion, clases in AVIONES.items()}
 
 
-def cabina(avion):
-    """Cabina del avión del vuelo (los vuelos antiguos sin tipo conocido usan el avión predeterminado)."""
-    return CABINAS.get(avion) or CABINAS[AVION_PREDETERMINADO]
+def crear_cabina(avion, clases):
+    return _crear(avion, clases)
 
 
 # Compatibilidad: datos de ejemplo (init_db) y pruebas usan el avión predeterminado

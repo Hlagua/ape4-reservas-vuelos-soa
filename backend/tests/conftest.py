@@ -36,7 +36,19 @@ def crear_usuario():
     login = requests.post(f"{GATEWAY}/api/auth/login", json={"email": datos["email"], "password": datos["password"]})
     assert login.status_code == 200
     cuerpo = login.json()
-    return {**datos, "id": cuerpo["usuario"]["id"], "token": cuerpo["token"],
+    return {**datos, "id": cuerpo["usuario"]["id"], "rol": cuerpo["usuario"]["rol"], "token": cuerpo["token"],
+            "headers": {"Authorization": f"Bearer {cuerpo['token']}"}}
+
+
+@pytest.fixture
+def admin():
+    """Administrador de ejemplo (database/init_db.py): ingresa con email y contraseña como cualquier usuario."""
+    from database.init_db import USUARIO_ADMIN
+    login = requests.post(f"{GATEWAY}/api/auth/login",
+                          json={"email": USUARIO_ADMIN["email"], "password": USUARIO_ADMIN["password"]})
+    assert login.status_code == 200, login.text
+    cuerpo = login.json()
+    return {"id": cuerpo["usuario"]["id"], "rol": cuerpo["usuario"]["rol"],
             "headers": {"Authorization": f"Bearer {cuerpo['token']}"}}
 
 

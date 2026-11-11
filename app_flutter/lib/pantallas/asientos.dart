@@ -10,6 +10,7 @@ import '../utils/comunes.dart';
 import '../utils/validaciones.dart';
 import 'acceso.dart';
 import 'factura.dart';
+import 'mapa_vuelo.dart';
 
 const _intervaloActualizacion = Duration(seconds: 3);
 
@@ -265,6 +266,11 @@ class _PantallaAsientosState extends State<PantallaAsientos> {
   }
 
   Future<void> _clicAsiento(String asiento, String estado) async {
+    if (widget.sesion.esAdmin) {
+      avisar(context, 'Asiento $asiento: ${_descripcion(estado).toLowerCase()}. '
+          'El administrador solo puede ver los asientos, no comprarlos.', TipoAviso.info);
+      return;
+    }
     switch (estado) {
       case 'DISPONIBLE':
         if (!widget.sesion.autenticado) {
@@ -369,6 +375,20 @@ class _PantallaAsientosState extends State<PantallaAsientos> {
       _expiran.clear(); // ya no son retenciones: pasaron a OCUPADO
       if (!mounted) return;
       final reserva = r['reserva'] as Map<String, dynamic>;
+      if (edicion == null) {
+        // Compra nueva: animación del vuelo en el mapa con los datos de salida y llegada
+        await Navigator.push(
+          context,
+          PageRouteBuilder<void>(
+            transitionDuration: const Duration(milliseconds: 400),
+            pageBuilder: (_, _, _) => PantallaCompraConfirmada(
+                sesion: widget.sesion, reserva: reserva, vuelo: r['vuelo'] as Map<String, dynamic>),
+            transitionsBuilder: (_, animacion, _, hijo) => FadeTransition(opacity: animacion, child: hijo),
+          ),
+        );
+        if (mounted) Navigator.pop(context, true);
+        return;
+      }
       final ajuste = r['ajuste'] as Map<String, dynamic>?;
       avisar(context,
           '${r['mensaje']}: reserva #${reserva['id']}, asientos ${(reserva['asientos'] as List).join(', ')}'
@@ -476,6 +496,18 @@ class _PantallaAsientosState extends State<PantallaAsientos> {
         ? null
         : _expiran.values.reduce((a, b) => a.isBefore(b) ? a : b).difference(DateTime.now()).inSeconds.clamp(0, 9999);
 
+    if (widget.sesion.esAdmin) {
+      final v = _datos!['vuelo'] as Map<String, dynamic>;
+      return Card(
+        color: const Color(0xFFEEF2F6),
+        child: ListTile(
+          leading: const Icon(Icons.visibility),
+          title: const Text('Vista de administrador'),
+          subtitle: Text('Puede ver el vuelo y el estado de los ${v['asientos_totales']} asientos, '
+              'pero no seleccionarlos ni comprarlos.'),
+        ),
+      );
+    }
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
         Text('Su selección', style: Theme.of(context).textTheme.titleLarge),
